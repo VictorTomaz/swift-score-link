@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" style="color-scheme: dark; background-color: #1a1a1a;">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="https://media.base44.com/images/public/69bb019558d96a11fbfbddce/feae21962_B3883F9A-91A9-45CA-AFE4-AD5934ACC009.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, maximum-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#1a1a1a" />
+    <style>
+      :root { color-scheme: dark !important; }
+      html, body { background-color: #1a1a1a !important; color: #ffffff !important; }
+      /* Block Android WebView force-light */
+      @media (prefers-color-scheme: light) {
+        html, body { background-color: #1a1a1a !important; color: #ffffff !important; }
+      }
+    </style>
+    <link rel="manifest" href="/manifest.json" />
+    <title>Swift Score Golf</title>
+
+  </head>
+  <body style="margin: 0; padding: 0; overflow-x: hidden;">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

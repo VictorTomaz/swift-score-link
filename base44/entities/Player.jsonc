@@ -1,0 +1,87 @@
+{
+  "name": "Player",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Player's name"
+    },
+    "handicap": {
+      "type": "number",
+      "description": "Player's handicap value (absolute)"
+    },
+    "is_plus_handicap": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if handicap is +X (better than scratch)"
+    },
+    "mobile_phone": {
+      "type": "string",
+      "description": "Player's mobile phone number"
+    },
+    "email": {
+      "type": "string",
+      "description": "Player's email address"
+    },
+    "receive_text_results": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the player wants to receive text results"
+    },
+    "receive_email_results": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the player wants to receive email results"
+    },
+    "is_admin_managed": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this player is a shared sample/test player visible to all users"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "create": null,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "data.is_admin_managed": true
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

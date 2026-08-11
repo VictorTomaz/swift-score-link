@@ -1,0 +1,117 @@
+{
+  "name": "Subscription",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "description": "ID of the user who owns this subscription"
+    },
+    "product_id": {
+      "type": "string",
+      "description": "Apple product ID (e.g., com.swiftscore.monthly)"
+    },
+    "subscription_type": {
+      "type": "string",
+      "enum": [
+        "monthly",
+        "yearly"
+      ],
+      "description": "Subscription plan type"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "expired",
+        "cancelled",
+        "trialing"
+      ],
+      "default": "trialing",
+      "description": "Current subscription status"
+    },
+    "trial_start_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Start date of free trial"
+    },
+    "trial_end_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "End date of free trial"
+    },
+    "current_period_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Start of current billing period"
+    },
+    "current_period_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "End of current billing period"
+    },
+    "apple_transaction_id": {
+      "type": "string",
+      "description": "Apple transaction ID"
+    },
+    "apple_original_transaction_id": {
+      "type": "string",
+      "description": "Apple original transaction ID (for renewals)"
+    },
+    "receipt_data": {
+      "type": "string",
+      "description": "Apple receipt data for validation"
+    },
+    "is_trial_period": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether currently in trial period"
+    }
+  },
+  "required": [
+    "user_id",
+    "product_id",
+    "subscription_type"
+  ],
+  "rls": {
+    "create": null,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "data.user_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

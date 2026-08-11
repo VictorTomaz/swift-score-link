@@ -1,0 +1,139 @@
+{
+  "name": "Course",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the golf course"
+    },
+    "city": {
+      "type": "string",
+      "description": "City where the course is located"
+    },
+    "state": {
+      "type": "string",
+      "description": "State abbreviation (e.g. CA, TX)"
+    },
+    "is_admin_managed": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this course was imported/managed by admins and is shared with all users"
+    },
+    "tee_sets": {
+      "type": "array",
+      "description": "Available tee sets for this course",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the tee set (e.g., Blue, White, Red)"
+          },
+          "slope": {
+            "type": "number",
+            "description": "Men's slope rating for this tee set (55\u2013155)"
+          },
+          "rating": {
+            "type": "number",
+            "description": "Men's course rating for this tee set (e.g., 72.4)"
+          },
+          "ladies_slope": {
+            "type": "number",
+            "description": "Ladies' slope rating for this tee set"
+          },
+          "ladies_rating": {
+            "type": "number",
+            "description": "Ladies' course rating for this tee set"
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "men's",
+              "ladies'"
+            ],
+            "default": "men's",
+            "description": "Default gender category for this tee set"
+          },
+          "par": {
+            "type": "array",
+            "description": "Men's par for each of 18 holes",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ladies_par": {
+            "type": "array",
+            "description": "Ladies' par for each of 18 holes",
+            "items": {
+              "type": "number"
+            }
+          },
+          "hole_handicap_indexes": {
+            "type": "array",
+            "description": "Men's handicap index for each of 18 holes",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ladies_hole_handicap_indexes": {
+            "type": "array",
+            "description": "Ladies' handicap index for each of 18 holes",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "is_private": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, only the creator can see this course"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "create": null,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "data.is_admin_managed": true
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

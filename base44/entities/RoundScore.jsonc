@@ -1,0 +1,51 @@
+{
+  "name": "RoundScore",
+  "type": "object",
+  "properties": {
+    "round_id": {
+      "type": "string",
+      "description": "ID of the parent Round record"
+    },
+    "player_id": {
+      "type": "string",
+      "description": "ID of the player (matches player_id in Round.players)"
+    },
+    "scores": {
+      "type": "array",
+      "description": "Array of 18 scores for this player",
+      "items": {}
+    }
+  },
+  "required": [
+    "round_id",
+    "player_id"
+  ],
+  "rls": {
+    "create": null,
+    "read": null,
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

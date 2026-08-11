@@ -1,0 +1,652 @@
+{
+  "name": "Round",
+  "type": "object",
+  "properties": {
+    "event_name": {
+      "type": "string",
+      "description": "Name of the event"
+    },
+    "course_name": {
+      "type": "string",
+      "description": "Name of the golf course"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the round"
+    },
+    "tee_set": {
+      "type": "string",
+      "description": "Tee set played"
+    },
+    "round_gender": {
+      "type": "string",
+      "enum": [
+        "men's",
+        "ladies'"
+      ],
+      "default": "men's",
+      "description": "Default tee gender for the round"
+    },
+    "slope": {
+      "type": "number",
+      "description": "Slope rating for the selected tee set"
+    },
+    "rating": {
+      "type": "number",
+      "description": "Course rating for the selected tee set"
+    },
+    "course_tee_sets": {
+      "type": "array",
+      "description": "All tee sets available on the course (for per-player tee preference)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slope": {
+            "type": "number"
+          },
+          "rating": {
+            "type": "number"
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "men's",
+              "ladies'"
+            ],
+            "default": "men's"
+          },
+          "par": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "hole_handicap_indexes": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ladies_hole_handicap_indexes": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "handicap_adjustment_mode": {
+      "type": "boolean",
+      "default": true,
+      "description": "If true, handicap index is converted to course handicap using slope/rating. If false, handicap is used as-is."
+    },
+    "game_mode": {
+      "type": "string",
+      "enum": [
+        "SWIFT_SCORE_11",
+        "CUSTOM",
+        "OFF"
+      ],
+      "description": "Game mode"
+    },
+    "buy_in": {
+      "type": "number",
+      "description": "Buy-in amount per player (main pot). For multi-day series rounds, this is the total series entry fee per player."
+    },
+    "is_multi_day": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this round is part of a multi-day or multi-flight tournament series. The buy-in represents the total series entry fee (held until final round), while side games (skins, KPs, deuces) are settled round-by-round."
+    },
+    "parent_round_id": {
+      "type": "string",
+      "description": "For series child rounds (Day/Flight 2+): the ID of the parent (Day/Flight 1) round that anchors the series. Null for standalone rounds and for the parent round itself."
+    },
+    "is_series_final": {
+      "type": "boolean",
+      "default": false,
+      "description": "Series: explicitly marks this child round as the final day of the series. When true (and, for hybrid tournaments, is_final_flight is also true), the main gross/net purse is distributed from cumulative/field standings. When false (default), the main purse is held \u2014 side games (skins, KPs, deuces) settle round-by-round. If unset, final-day status is inferred from dates (latest-dated child)."
+    },
+    "is_final_flight": {
+      "type": "boolean",
+      "default": false,
+      "description": "Hybrid multi-day + multi-flight only: explicitly marks this round as belonging to the final flight of the series. The main purse pays out only when BOTH is_final_flight and is_series_final are true (final day of the final flight). If unset, auto-detected from flight_number (highest = final flight)."
+    },
+    "series_type": {
+      "type": "string",
+      "enum": [
+        "multi_day",
+        "multi_flight"
+      ],
+      "default": "multi_day",
+      "description": "Series type: 'multi_day' (same players across multiple days, scores summed for cumulative standings) or 'multi_flight' (different players per flight, field standings rank all players together for Low Gross/Net of the Field). Only meaningful when is_multi_day is true."
+    },
+    "is_multi_flight": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this tournament has different player pools per flight. Independent of the multi-day toggle \u2014 both can be enabled simultaneously for a multi-flight tournament that spans multiple days. When true, series_type is set to 'multi_flight' and is_multi_day is also true."
+    },
+    "flight_number": {
+      "type": "number",
+      "default": 1,
+      "description": "Hybrid multi-day + multi-flight: identifies which flight this round belongs to (1, 2, 3\u2026). Flight 1 / Day 1 is the parent (flight_number=1). When adding a new day to an existing flight, the flight_number matches that flight. When adding a new flight, flight_number is the next available. Only meaningful when both is_multi_day and is_multi_flight are true."
+    },
+    "player_count": {
+      "type": "number",
+      "description": "Number of players"
+    },
+    "par": {
+      "type": "array",
+      "description": "Par for each of 18 holes",
+      "items": {
+        "type": "number"
+      }
+    },
+    "hole_handicap_indexes": {
+      "type": "array",
+      "description": "Men's handicap index for each of 18 holes",
+      "items": {
+        "type": "number"
+      }
+    },
+    "ladies_hole_handicap_indexes": {
+      "type": "array",
+      "description": "Ladies' handicap index for each of 18 holes",
+      "items": {
+        "type": "number"
+      }
+    },
+    "team_mode": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, scorecard renders team format with Gross and Net best-ball rows"
+    },
+    "team_size": {
+      "type": "number",
+      "enum": [
+        2,
+        3,
+        4
+      ],
+      "default": 2,
+      "description": "Number of players per team (2, 3, or 4) \u2014 used for team format scorecards"
+    },
+    "team_format": {
+      "type": "string",
+      "enum": [
+        "best_ball",
+        "scramble",
+        "aggregate"
+      ],
+      "default": "best_ball",
+      "description": "Team scorecard format: best_ball (individual rows + Gross/Net best-ball), scramble (one team score per hole), or aggregate (sum of all team scores per hole)"
+    },
+    "segments_666": {
+      "type": "array",
+      "description": "6-6-6 format: one entry per 6-hole segment with its scoring format",
+      "default": [],
+      "items": {
+        "type": "object",
+        "properties": {
+          "holes": {
+            "type": "string",
+            "description": "Label for the hole range (e.g. 'Holes 1\u20136')"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "chapman",
+              "best_ball",
+              "scramble",
+              "alternate_shot",
+              "aggregate"
+            ],
+            "description": "Scoring format for this segment"
+          }
+        }
+      }
+    },
+    "game_type": {
+      "type": "string",
+      "enum": [
+        "individual",
+        "team_scramble",
+        "team_best_ball",
+        "team_6_6_6",
+        "team_chapman",
+        "team_aggregate"
+      ],
+      "default": "individual",
+      "description": "Game type: individual (standard play) or team-based formats (scramble, best ball, 6-6-6, chapman, aggregate)"
+    },
+    "hcp_formula": {
+      "type": "string",
+      "enum": [
+        "none",
+        "individual",
+        "combined_avg",
+        "avg_30",
+        "combined_85",
+        "usga_scramble",
+        "split_60_40",
+        "split_35_15",
+        "sum"
+      ],
+      "default": "combined_85",
+      "description": "Team handicap formula: none (no handicap), individual (per-player handicap, no team adjustment), combined_avg, avg_30 (70% of combined average), combined_85 (85% of combined), usga_scramble (25% low / 15% high), split_60_40 (60% low / 40% high), split_35_15 (35% low / 15% high), or sum (full combined)"
+    },
+    "games": {
+      "type": "array",
+      "description": "Multi-game configuration: each game is computed independently (main event + side games)",
+      "default": [],
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for this game within the round"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name (e.g. 'Main Event', 'Individual Side Pot')"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "individual",
+              "team"
+            ],
+            "default": "individual",
+            "description": "Whether standings/payouts are computed per-player or per-team"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "stroke_play",
+              "best_ball",
+              "scramble",
+              "chapman",
+              "6_6_6",
+              "aggregate",
+              "stableford"
+            ],
+            "default": "stroke_play",
+            "description": "Scoring format for this game"
+          },
+          "buy_in": {
+            "type": "number",
+            "default": 0,
+            "description": "Per-player buy-in for this game's purse"
+          },
+          "is_main": {
+            "type": "boolean",
+            "default": false,
+            "description": "True for the primary game (drives scorecard layout and team roster)"
+          },
+          "team_size": {
+            "type": "number",
+            "enum": [
+              2,
+              3,
+              4
+            ],
+            "description": "Team size for this game (only if type='team')"
+          },
+          "hcp_formula": {
+            "type": "string",
+            "enum": [
+              "none",
+              "individual",
+              "combined_avg",
+              "avg_30",
+              "combined_85",
+              "usga_scramble",
+              "split_60_40",
+              "split_35_15",
+              "sum"
+            ],
+            "description": "Team handicap formula for this game (only if type='team')"
+          },
+          "payout_percent": {
+            "type": "number",
+            "description": "Percentage of this game's purse paid to top finishers"
+          },
+          "places_paid": {
+            "type": "number",
+            "default": 3,
+            "description": "Number of payout positions for this game"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "format"
+        ]
+      }
+    },
+    "players": {
+      "type": "array",
+      "description": "Player roster with scores",
+      "items": {
+        "type": "object",
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "handicap": {
+            "type": "number"
+          },
+          "is_plus_handicap": {
+            "type": "boolean",
+            "default": false
+          },
+          "course_handicap": {
+            "type": "number"
+          },
+          "tee_preference": {
+            "type": "string"
+          },
+          "tee_gender_preference": {
+            "type": "string",
+            "enum": [
+              "men's",
+              "ladies'"
+            ]
+          },
+          "tee_time": {
+            "type": "string",
+            "description": "Assigned tee time (HH:MM)"
+          },
+          "tee_group": {
+            "type": "string",
+            "description": "Optional group tag for 'Group Priority' auto-assignment"
+          },
+          "scores": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      }
+    },
+    "tee_sheet_config": {
+      "type": "object",
+      "description": "Tee sheet configuration for this round",
+      "properties": {
+        "start_time": {
+          "type": "string",
+          "description": "First tee time (HH:MM)"
+        },
+        "interval_minutes": {
+          "type": "number",
+          "default": 8
+        },
+        "group_size": {
+          "type": "number",
+          "default": 4
+        },
+        "extra_slots": {
+          "type": "number",
+          "default": 0,
+          "description": "Additional empty tee time slots beyond the player count"
+        }
+      }
+    },
+    "kps_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "kp_holes": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "kp_winners": {
+      "type": "array",
+      "description": "KP winner player_ids per hole",
+      "items": {
+        "type": "object",
+        "properties": {
+          "hole": {
+            "type": "number"
+          },
+          "player_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "kp_separate_buy_in": {
+      "type": "boolean",
+      "default": false
+    },
+    "kp_buy_in": {
+      "type": "number",
+      "default": 5
+    },
+    "kp_player_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "kp_counts_as_skin": {
+      "type": "boolean",
+      "default": false
+    },
+    "gross_skins_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "gross_skins_separate_buy_in": {
+      "type": "boolean",
+      "default": false
+    },
+    "gross_skins_buy_in": {
+      "type": "number",
+      "default": 5
+    },
+    "gross_skins_player_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "net_skins_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "net_skins_separate_buy_in": {
+      "type": "boolean",
+      "default": false
+    },
+    "net_skins_buy_in": {
+      "type": "number",
+      "default": 5
+    },
+    "net_skins_player_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "skins_carryover": {
+      "type": "boolean",
+      "default": false
+    },
+    "skins_team_mode": {
+      "type": "boolean",
+      "default": true,
+      "description": "In team-format rounds, skins default to team-level (team best-ball per hole, winnings split among members). Set to false to keep skins individual per-player even in a team event."
+    },
+    "deuce_pot_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "deuce_buy_in": {
+      "type": "number",
+      "default": 5
+    },
+    "deuce_player_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "custom_place_payout_percent": {
+      "type": "number"
+    },
+    "custom_games_percent": {
+      "type": "number"
+    },
+    "custom_gross_percent": {
+      "type": "number"
+    },
+    "custom_net_percent": {
+      "type": "number"
+    },
+    "custom_gross_field_percent": {
+      "type": "number"
+    },
+    "custom_net_field_percent": {
+      "type": "number"
+    },
+    "custom_gross_places": {
+      "type": "number"
+    },
+    "custom_net_places": {
+      "type": "number"
+    },
+    "field_prizes_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Multi-flight only: if true, Low Gross of the Field and Low Net of the Field prizes are calculated as a percentage of their respective gross/net pots and awarded to the overall best players across all flights. Set on the parent (Flight 1) round."
+    },
+    "field_gross_percent": {
+      "type": "number",
+      "default": 22,
+      "description": "Multi-flight only: percentage of the combined gross pot (across all flights) awarded to Low Gross of the Field. Only used when field_prizes_enabled is true."
+    },
+    "field_net_percent": {
+      "type": "number",
+      "default": 22,
+      "description": "Multi-flight only: percentage of the combined net pot (across all flights) awarded to Low Net of the Field. Only used when field_prizes_enabled is true."
+    },
+    "field_gross_prize": {
+      "type": "number",
+      "default": 0,
+      "description": "Legacy: fixed dollar amount for Low Gross of the Field. Superseded by field_gross_percent when field_prizes_enabled is true."
+    },
+    "field_net_prize": {
+      "type": "number",
+      "default": 0,
+      "description": "Legacy: fixed dollar amount for Low Net of the Field. Superseded by field_net_percent when field_prizes_enabled is true."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "setup",
+        "roster",
+        "scoring",
+        "completed"
+      ],
+      "default": "setup"
+    },
+    "results": {
+      "type": "object",
+      "description": "Computed results JSON"
+    },
+    "is_public": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this round's results can be viewed via public link"
+    },
+    "locked_format": {
+      "type": "object",
+      "description": "Locked scorecard format snapshot (header, par, hcp) to prevent changes",
+      "properties": {
+        "header_text": {
+          "type": "string",
+          "description": "Locked header text for scorecard PDF"
+        },
+        "par": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "hole_handicap_indexes": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "scorecard_pdf_url": {
+      "type": "string",
+      "description": "URL of the most recently generated scorecard PDF (overwritten each generation)"
+    },
+    "results_pdf_url": {
+      "type": "string",
+      "description": "Cached results PDF URL \u2014 first successful generation is returned on repeated presses; cleared when results are recomputed"
+    }
+  },
+  "required": [
+    "event_name",
+    "game_mode",
+    "buy_in",
+    "player_count"
+  ],
+  "rls": {
+    "create": null,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "data.is_public": true
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

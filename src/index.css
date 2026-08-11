@@ -1,0 +1,280 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-inter: 'Inter', sans-serif;
+    --background: 150 20% 97%;
+    --foreground: 160 30% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 160 30% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 160 30% 8%;
+    --primary: 152 60% 12%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 150 15% 93%;
+    --secondary-foreground: 160 30% 12%;
+    --muted: 150 10% 94%;
+    --muted-foreground: 160 10% 45%;
+    --accent: 43 80% 52%;
+    --accent-foreground: 40 90% 10%;
+    --logistics: 217 91% 60%;
+    --logistics-foreground: 0 0% 100%;
+    --edit: 263 70% 58%;
+    --edit-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 150 12% 88%;
+    --input: 150 12% 88%;
+    --ring: 152 45% 28%;
+    --chart-1: 152 45% 28%;
+    --chart-2: 43 80% 52%;
+    --chart-3: 200 60% 45%;
+    --chart-4: 340 65% 55%;
+    --chart-5: 270 50% 50%;
+    --radius: 0.75rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 152 45% 28%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 150 15% 93%;
+    --sidebar-accent-foreground: 160 30% 12%;
+    --sidebar-border: 150 12% 88%;
+    --sidebar-ring: 152 45% 28%;
+  }
+
+  .dark {
+    --background: 160 25% 6%;
+    --foreground: 150 15% 95%;
+    --card: 160 20% 9%;
+    --card-foreground: 150 15% 95%;
+    --popover: 160 20% 9%;
+    --popover-foreground: 150 15% 95%;
+    --primary: 152 50% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 160 15% 14%;
+    --secondary-foreground: 150 15% 90%;
+    --muted: 160 12% 15%;
+    --muted-foreground: 150 8% 55%;
+    --accent: 43 85% 55%;
+    --accent-foreground: 40 90% 10%;
+    --logistics: 217 91% 65%;
+    --logistics-foreground: 0 0% 100%;
+    --edit: 263 60% 68%;
+    --edit-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 160 12% 18%;
+    --input: 160 12% 18%;
+    --ring: 152 50% 42%;
+    --chart-1: 152 50% 42%;
+    --chart-2: 43 85% 55%;
+    --chart-3: 200 60% 50%;
+    --chart-4: 340 65% 55%;
+    --chart-5: 270 50% 55%;
+    --sidebar-background: 160 25% 6%;
+    --sidebar-foreground: 150 15% 95%;
+    --sidebar-primary: 152 50% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 160 15% 14%;
+    --sidebar-accent-foreground: 150 15% 90%;
+    --sidebar-border: 160 12% 18%;
+    --sidebar-ring: 152 50% 42%;
+  }
+}
+
+
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply text-foreground;
+    background-color: hsl(var(--background));
+    overscroll-behavior: none;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    overscroll-behavior: none;
+  }
+
+  /* Touch-friendly sizing and mobile UX */
+  button, input, textarea, select, [role="button"], [role="menuitem"], [role="tab"] {
+    @apply min-h-[44px];
+  }
+
+  /* Content areas — `none` fully suppresses native overscroll/rubber-band
+     so the custom JS pull-to-refresh handler is the only pull-down behavior */
+  main, [role="main"] {
+    overscroll-behavior-y: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Hide web scrollbars on scrollable containers while keeping touch inertia */
+  main,
+  [role="main"],
+  .overflow-x-auto,
+  .overflow-y-auto,
+  .overflow-auto,
+  [data-pull-to-refresh] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  main::-webkit-scrollbar,
+  [role="main"]::-webkit-scrollbar,
+  .overflow-x-auto::-webkit-scrollbar,
+  .overflow-y-auto::-webkit-scrollbar,
+  .overflow-auto::-webkit-scrollbar,
+  [data-pull-to-refresh]::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Prevent text selection on interactive elements — native app feel */
+  a, button, [role='button'], [role='tab'], select, input[type='submit'], svg, img {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* Keep text selection enabled for input fields and standard paragraphs */
+  input[type='text'], input[type='email'], input[type='number'], input[type='password'], input[type='search'], input[type='tel'], input[type='url'], textarea, p, li, h1, h2, h3, h4, h5, h6, span {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Ensure minimum font sizes for readability */
+  body, p, span, li, a {
+    font-size: 1rem;
+  }
+
+  small {
+    font-size: 0.75rem;
+  }
+
+  /* Safe area support */
+  html {
+    --safe-area-top: max(0px, env(safe-area-inset-top));
+    --safe-area-bottom: max(0px, env(safe-area-inset-bottom));
+    --safe-area-left: max(0px, env(safe-area-inset-left));
+    --safe-area-right: max(0px, env(safe-area-inset-right));
+  }
+
+  /* Safe-area padding for bottom-anchored floating elements */
+  [data-safe-area] {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Print-only scorecards are portaled to <body> so they sit outside #root.
+   On screen the portal is hidden; in print we hide the whole app (#root)
+   and show only #print-scorecards. Because the portal is a static body-
+   level element (not absolutely positioned), page breaks fire correctly
+   in iOS Safari — giving 2–3 cards per page instead of one stretched page. */
+#print-scorecards, #print-results, #print-blank-scorecards {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: letter landscape;
+    margin: 0.25in;
+  }
+  html, body {
+    background: #ffffff !important;
+  }
+  /* Hide the entire app and ALL body-level portals (Radix dialogs/modals,
+     toasters, popovers) — only the dedicated print portals below remain. */
+  body > *:not(#print-results):not(#print-scorecards):not(#print-blank-scorecards) {
+    display: none !important;
+  }
+  #print-scorecards {
+    display: block;
+    width: 10.5in;
+  }
+  #print-scorecards .overflow-x-auto,
+  #print-blank-scorecards .overflow-x-auto {
+    overflow: visible !important;
+  }
+  #print-results {
+    display: block;
+  }
+  #print-results .print-results-page {
+    width: 10in;
+    margin: 0 auto;
+  }
+  #print-results table {
+    width: 100% !important;
+    border-collapse: collapse;
+  }
+  /* Keep the scorecard's fixed inline column widths so the printed card
+     matches the on-screen layout exactly (the natural ~750px table fits a
+     landscape letter page). Only override padding so cells don't crowd. */
+  #print-scorecards table,
+  #print-blank-scorecards table {
+    width: 10.3in !important;
+    table-layout: fixed !important;
+    font-size: 13px !important;
+  }
+  #print-scorecards table th,
+  #print-scorecards table td,
+  #print-blank-scorecards table th,
+  #print-blank-scorecards table td {
+    padding: 6px 3px !important;
+    white-space: nowrap;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  #print-scorecards .print-write-row td,
+  #print-blank-scorecards .print-write-row td {
+    height: 38px !important;
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    font-size: 12px !important;
+  }
+  #print-scorecards .team-name-cell,
+  #print-blank-scorecards .team-name-cell {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: break-word;
+  }
+  .print-scorecard-page {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 7.4in;
+    page-break-after: always;
+    break-after: page;
+  }
+  .print-scorecard-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+  /* Never split a single scorecard across a page — keeps each card whole
+     so nothing gets clipped, matching the on-screen preview. */
+  #print-scorecards .print-scorecard-page > div,
+  #print-blank-scorecards .print-scorecard-page > div {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  /* Blank-scorecard print mode: body.print-blank-mode is added synchronously
+     around window.print() so only the blank cards render, not the live ones. */
+  body.print-blank-mode #print-scorecards {
+    display: none !important;
+  }
+  body.print-blank-mode #print-blank-scorecards {
+    display: block;
+    width: 10.5in;
+  }
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

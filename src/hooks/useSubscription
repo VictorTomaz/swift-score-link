@@ -1,0 +1,34 @@
+import { useState, useEffect } from 'react';
+import { base44 } from '@/api/base44Client';
+
+export function useSubscription() {
+  const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
+  const [isTrial, setIsTrial] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [subscription, setSubscription] = useState(null);
+
+  useEffect(() => {
+    checkSubscription();
+  }, []);
+
+  const checkSubscription = async () => {
+    try {
+      const response = await base44.functions.invoke('checkSubscriptionStatus', {});
+      setHasActiveSubscription(response.data.hasActiveSubscription || false);
+      setIsTrial(response.data.isTrial || false);
+      setSubscription(response.data.subscription || null);
+    } catch (error) {
+      console.error('Failed to check subscription:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return {
+    hasActiveSubscription,
+    isTrial,
+    subscription,
+    loading,
+    refreshSubscription: checkSubscription,
+  };
+}
