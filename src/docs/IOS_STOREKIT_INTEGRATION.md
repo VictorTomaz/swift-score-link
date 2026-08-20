@@ -22,7 +22,7 @@ The web app communicates with the native iOS layer via `webkit.messageHandlers`.
    - Create a Subscription Group (e.g., "Swift Score Premium")
 
 2. **Bundle Identifier**:
-   - Ensure your app's bundle ID matches the one in App Store Connect (e.g., `com.swiftscore.app`)
+   - Ensure your app's bundle ID matches the one in App Store Connect (e.g., `com.swiftscore.golf`)
 
 ## Implementation
 

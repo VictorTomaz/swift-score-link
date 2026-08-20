@@ -1,0 +1,37 @@
+ORQUESTRAÇÃO SwiftScore (Edward) - CORREÇÃO: Bundle ID divergente + auditoria de estado
+
+Contexto:
+- Repo: VictorTomaz/swift-score-link
+- Bundle ID correto (confirmado pelo provisioning profile SwiftScore_App_Store_Distribution.mobileprovision, application-identifier termina em com.swiftscore.golf): com.swiftscore.golf
+- Team ID (extraído do provisioning profile, TeamIdentifier): KJ7SL99YY3
+- Certificados em: ~/Documents/AssinaturaClientes/edward/ (NÃO recriar, apenas usar)
+
+PROBLEMA ENCONTRADO NA AUDITORIA:
+O project.pbxproj atual (ios/App/App.xcodeproj/project.pbxproj) está com:
+  PRODUCT_BUNDLE_IDENTIFIER = com.swiftscore.app;
+Isso diverge do Bundle ID real do app (com.swiftscore.golf) e do provisioning profile. Se não for corrigido, qualquer archive/assinatura vai falhar ou assinar com identidade errada.
+
+TAREFAS:
+
+1. Auditar TODAS as ocorrências de "com.swiftscore" no repositório (não só no pbxproj - checar capacitor.config.ts, Info.plist, e qualquer outro arquivo de config) antes de alterar. Reportar cada ocorrência encontrada com arquivo e linha.
+
+2. Corrigir PRODUCT_BUNDLE_IDENTIFIER de com.swiftscore.app para com.swiftscore.golf em TODAS as ocorrências no project.pbxproj (geralmente 2 - Debug e Release).
+
+3. Corrigir também o appId em capacitor.config.ts se estiver com com.swiftscore.app (deve ser com.swiftscore.golf).
+
+4. Confirmar a branch de trabalho:
+   - Local está em "master"
+   - Verificar se o remoto (origin) tem uma branch "main" separada ou se "master" é de fato a branch principal (git remote show origin, ou git ls-remote --heads origin)
+   - Reportar qual é a branch correta a usar - NÃO decidir sozinho se houver ambiguidade real, reportar e aguardar confirmação
+
+5. Revisar o diff completo de tudo que está pendente (git status mostra: .gitignore, package.json, package-lock.json, src/App.jsx, src/api/base44Client.js modificados; .github/, capacitor.config.ts, ios/, scripts/ não rastreados). Mostrar um resumo do que cada mudança faz antes de commitar.
+
+6. Fazer commit de tudo (incluindo a correção do Bundle ID) com mensagem clara, ex: "chore: iOS prep + fix bundle identifier to com.swiftscore.golf". NÃO fazer push ainda - aguardar confirmação após reportar o diff.
+
+Escopo estrito: apenas correção de Bundle ID e organização do estado do repositório. NÃO criar workflow do GitHub Actions ainda, NÃO configurar secrets, NÃO fazer push. Isso vem depois, em outra etapa.
+
+RELATÓRIO FINAL:
+- Todas as ocorrências de com.swiftscore.app encontradas e corrigidas (arquivo:linha)
+- Resultado da checagem de branch (main vs master)
+- Resumo do diff commitado
+- Confirmação de que NADA foi enviado (push) ainda
