@@ -1,0 +1,192 @@
+name: iOS Release Signed
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_and_sign:
+    name: Build and Sign iOS App
+    runs-on: macos-26
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+
+          XCODE_VER=$(xcodebuild -version | awk 'NR==1{print $2}')
+          XCODE_MAJOR=$(echo "$XCODE_VER" | cut -d. -f1)
+          if [ "$XCODE_MAJOR" -lt 26 ]; then
+            echo "Error: Xcode version $XCODE_VER is lower than 26"
+            exit 1
+          fi
+
+          SDK_VER=$(xcrun --sdk iphoneos --show-sdk-version)
+          SDK_MAJOR=$(echo "$SDK_VER" | cut -d. -f1)
+          if [ "$SDK_MAJOR" -lt 26 ]; then
+            echo "Error: iphoneos SDK version $SDK_VER is lower than 26"
+            exit 1
+          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Web App
+        run: npm run build
+
+      - name: Sync iOS Project
+        run: npm run ios:sync
+
+      - name: Install Apple Certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Install Provisioning Profile
+        env:
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          PROFILE_PATH=$RUNNER_TEMP/build_profile.mobileprovision
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$PROFILE_PATH"
+
+          UUID=$(security cms -D -i "$PROFILE_PATH" | plutil -extract UUID raw -)
+          PROFILE_NAME=$(security cms -D -i "$PROFILE_PATH" | plutil -extract Name raw -)
+
+          echo "Extracted UUID: $UUID"
+          echo "Extracted Name: $PROFILE_NAME"
+
+          mkdir -p ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles
+          cp "$PROFILE_PATH" ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/"$UUID.mobileprovision"
+
+          echo "PROFILE_UUID=$UUID" >> $GITHUB_ENV
+          echo "PROFILE_NAME=$PROFILE_NAME" >> $GITHUB_ENV
+
+      - name: Verify Code Signing Identity
+        run: |
+          set -euo pipefail
+          security find-identity -v -p codesigning
+
+      - name: Verify Team ID and Bundle ID
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DEVELOPMENT_TEAM" ]; then
+            echo "Error: APPLE_TEAM_ID secret is empty."
+            exit 1
+          fi
+          BUNDLE_ID_IN_PROJECT=$(grep -m1 "PRODUCT_BUNDLE_IDENTIFIER" ios/App/App.xcodeproj/project.pbxproj | sed -E 's/.*= (.*);/\1/' | tr -d '"')
+          echo "Bundle ID in project: $BUNDLE_ID_IN_PROJECT"
+          if [ "$BUNDLE_ID_IN_PROJECT" != "com.swiftscore.golf" ]; then
+            echo "Error: Bundle ID mismatch. Expected com.swiftscore.golf, found $BUNDLE_ID_IN_PROJECT"
+            exit 1
+          fi
+
+      - name: Xcodebuild Archive
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/SwiftScore.xcarchive \
+            DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            PRODUCT_BUNDLE_IDENTIFIER=com.swiftscore.golf
+
+      - name: Create ExportOptions.plist
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          cat <<EOF2 > build/ExportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store-connect</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>teamID</key>
+              <string>$DEVELOPMENT_TEAM</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>com.swiftscore.golf</key>
+                  <string>$PROFILE_NAME</string>
+              </dict>
+          </dict>
+          </plist>
+          EOF2
+
+      - name: Xcodebuild Export Archive
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath build/SwiftScore.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/ExportOptions.plist
+
+      - name: Validate Generated IPA
+        run: |
+          set -euo pipefail
+          IPA_PATH=$(find build/export -name "*.ipa" | head -n 1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "Error: IPA file not found."
+            exit 1
+          fi
+          echo "Found IPA at: $IPA_PATH"
+          echo "IPA_PATH=$IPA_PATH" >> $GITHUB_ENV
+          ls -lh "$IPA_PATH"
+
+      - name: Validate App Signature
+        run: |
+          set -euo pipefail
+          codesign -dv --verbose=4 build/SwiftScore.xcarchive/Products/Applications/*.app
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-signed-release
+          path: ${{ env.IPA_PATH }}
+          retention-days: 7
+
+      - name: Cleanup Keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
+          rm -f $RUNNER_TEMP/build_certificate.p12
+          rm -f $RUNNER_TEMP/build_profile.mobileprovision
+          if [ -n "${PROFILE_UUID:-}" ]; then
+            rm -f ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/"$PROFILE_UUID.mobileprovision" || true
+          fi
