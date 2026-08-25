@@ -38,3 +38,9 @@ ios/App/build/
 ios/App/Pods/
 ios/App/DerivedData/
 ios/App/xcuserdata/
+
+# Support files and prompts
+run_log.txt
+scratch/
+AGY_*_PROMPT.txt
+

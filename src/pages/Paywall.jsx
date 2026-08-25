@@ -2,9 +2,12 @@ import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
-import { Star, Trophy, Shield, Mail, TrendingUp, Zap, DollarSign, Target, Clock } from "lucide-react";
+import { Star, Trophy, Shield, Mail, TrendingUp, Zap, DollarSign, Target } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Capacitor, registerPlugin } from "@capacitor/core";
+
+const StoreKitPlugin = registerPlugin("StoreKitPlugin");
 
 export default function Paywall() {
   const navigate = useNavigate();
@@ -13,21 +16,17 @@ export default function Paywall() {
   const [loading, setLoading] = useState(null);
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
+  const [storeKitProducts, setStoreKitProducts] = useState([]);
 
   const iosProductIdRef = useRef(null);
 
   // --- iOS app detection ---
-  // The Base44-managed iOS wrapper is a WKWebView that does NOT support StoreKit
-  // and does NOT inject window.webkit.messageHandlers.purchaseSubscription.
-  // We detect it via user agent: Safari/Chrome/Firefox on iOS include identifiable
-  // tokens ("Safari/", "CriOS/", "FxiOS/"); a bare WKWebView has none of these.
   const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
   const isIOSBrowser = isIOSDevice && /Safari|CriOS|FxiOS/.test(navigator.userAgent);
   const isInsideIOSApp = isIOSDevice && !isIOSBrowser;
 
-  // StoreKit bridge — will be true only if/when Base44 adds native StoreKit support.
-  // Currently always false; kept for forward compatibility.
-  const isIOSNative = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.purchaseSubscription);
+  // Modern Capacitor StoreKit 2 bridge
+  const isIOSNative = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios';
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -42,7 +41,11 @@ export default function Paywall() {
       window.history.replaceState({}, "", "/Paywall");
     }
     checkExistingSubscription();
-  }, []);
+    
+    if (isIOSNative) {
+      loadStoreKitProducts();
+    }
+  }, [isIOSNative]);
 
   // Auto-redirect to Dashboard after successful checkout
   useEffect(() => {
@@ -51,6 +54,33 @@ export default function Paywall() {
       return () => clearTimeout(timer);
     }
   }, [hasActiveSubscription, statusMessage, navigate]);
+
+  // Sincronização automática quando o nativo atualiza transações em background (como resgate de Offer Code)
+  useEffect(() => {
+    let listener = null;
+    if (isIOSNative) {
+      listener = StoreKitPlugin.addListener("subscriptionUpdate", () => {
+        console.log("Subscription updated event received from iOS StoreKit 2");
+        checkExistingSubscription();
+      });
+    }
+    return () => {
+      if (listener) {
+        listener.remove();
+      }
+    };
+  }, [isIOSNative]);
+
+  const loadStoreKitProducts = async () => {
+    try {
+      const result = await StoreKitPlugin.getProducts();
+      if (result && result.products) {
+        setStoreKitProducts(result.products);
+      }
+    } catch (err) {
+      console.error("Failed to load StoreKit products:", err);
+    }
+  };
 
   const checkExistingSubscription = async () => {
     try {
@@ -64,87 +94,46 @@ export default function Paywall() {
     }
   };
 
-  // StoreKit callback handlers (called from native iOS after purchase/restore)
-  useEffect(() => {
-    window.handleStoreKitPurchaseSuccess = async (receiptData) => {
-      try {
-        const response = await base44.functions.invoke('validateAppleReceipt', {
-          receiptData,
-          productId: iosProductIdRef.current,
-        });
-        if (response.data.valid && response.data.isActive) {
-          setHasActiveSubscription(true);
-          setIsTrial(response.data.isTrial || false);
-          setStatusMessage("Subscription activated! Redirecting...");
-          setTimeout(() => navigate("/Dashboard"), 1500);
-        } else {
-          setError("Receipt validation failed. Please try restoring purchases.");
-        }
-      } catch (err) {
-        console.error("Receipt validation error:", err);
-        setError("Failed to validate purchase. Please try restoring purchases.");
-      }
-      setLoading(null);
-    };
-
-    window.handleStoreKitRestoreSuccess = async (receiptData) => {
-      try {
-        for (const pid of ['com.swiftscore.yearly', 'com.swiftscore.monthly']) {
-          const response = await base44.functions.invoke('validateAppleReceipt', {
-            receiptData,
-            productId: pid,
-          });
-          if (response.data.valid && response.data.isActive) {
-            setHasActiveSubscription(true);
-            setIsTrial(response.data.isTrial || false);
-            setStatusMessage("Purchases restored! Redirecting...");
-            setTimeout(() => navigate("/Dashboard"), 1500);
-            return;
-          }
-        }
-        setError("No active subscription found to restore.");
-      } catch (err) {
-        console.error("Restore validation error:", err);
-        setError("Failed to restore purchases. Please try again.");
-      }
-      setLoading(null);
-    };
-
-    window.handleStoreKitError = ({ message }) => {
-      setError(message || "Purchase failed. Please try again.");
-      setLoading(null);
-    };
-
-    return () => {
-      delete window.handleStoreKitPurchaseSuccess;
-      delete window.handleStoreKitRestoreSuccess;
-      delete window.handleStoreKitError;
-    };
-  }, [navigate]);
-
   const handleSubscribe = async (planType) => {
     setError(null);
     setLoading(planType);
 
-    // Subscriptions are temporarily disabled across all platforms.
-    setError("We're putting the finishing touches on subscriptions. They are temporarily unavailable while we complete our billing integration. Thank you for your patience—we look forward to offering subscriptions very soon. Existing subscribers can continue using the app as normal.");
-    setLoading(null);
-    return;
-
-    // iOS native app with StoreKit bridge — use In-App Purchase
+    // iOS native app with StoreKit 2 bridge
     if (isIOSNative) {
       const productId = planType === 'yearly' ? 'com.swiftscore.yearly' : 'com.swiftscore.monthly';
       iosProductIdRef.current = productId;
       try {
-        window.webkit.messageHandlers.purchaseSubscription.postMessage({ productId });
+        const result = await StoreKitPlugin.purchaseSubscription({ productId });
+        if (result.status === 'success') {
+          setStatusMessage("Validating purchase with App Store...");
+          const response = await base44.functions.invoke('validateAppleReceipt', {
+            receiptData: result.receiptData,
+            jwsTransaction: result.jwsTransaction,
+            productId: productId,
+          });
+          if (response.data.valid && response.data.isActive) {
+            setHasActiveSubscription(true);
+            setIsTrial(response.data.isTrial || false);
+            setStatusMessage("Subscription activated! Redirecting...");
+            setTimeout(() => navigate("/Dashboard"), 1500);
+          } else {
+            setError("Purchase validation failed. Please try restoring purchases.");
+          }
+        } else if (result.status === 'cancelled') {
+          console.log("User cancelled purchase flow.");
+        } else if (result.status === 'pending') {
+          setError("Purchase is pending parental or institutional approval.");
+        }
       } catch (err) {
-        setError("Unable to start purchase. Please try again.");
+        console.error("StoreKit purchase error:", err);
+        setError(err.message || "Unable to start purchase. Please try again.");
+      } finally {
         setLoading(null);
       }
       return;
     }
 
-    // Inside iOS app wrapper without StoreKit — block Stripe for Apple compliance
+    // Inside iOS app wrapper without StoreKit bridge (fallback)
     if (isInsideIOSApp && !isIOSNative) {
       setError("iOS subscriptions are temporarily unavailable. We're working to enable subscriptions and appreciate your patience.");
       setLoading(null);
@@ -158,12 +147,13 @@ export default function Paywall() {
       return;
     }
 
+    // Stripe Flow (Web/Desktop)
     try {
       let userEmail = null;
       try {
         const user = await base44.auth.me();
         if (user) userEmail = user.email;
-      } catch (_e) { /* not logged in — Stripe collects email */ }
+      } catch (_e) { /* ignore */ }
 
       const origin = window.location.origin;
       const response = await base44.functions.invoke('createStripeCheckout', {
@@ -181,6 +171,59 @@ export default function Paywall() {
     } catch (err) {
       console.error("Checkout error:", err);
       setError("Something went wrong starting checkout. Please try again.");
+      setLoading(null);
+    }
+  };
+
+  const handleRestore = async () => {
+    setError(null);
+    setLoading('restore');
+    try {
+      const result = await StoreKitPlugin.restorePurchases();
+      if (result.status === 'success') {
+        setStatusMessage("Restoring purchases...");
+        let restored = false;
+        
+        // Loop a verificação para os dois produtos
+        for (const pid of ['com.swiftscore.yearly', 'com.swiftscore.monthly']) {
+          const response = await base44.functions.invoke('validateAppleReceipt', {
+            receiptData: result.receiptData,
+            productId: pid,
+          });
+          if (response.data.valid && response.data.isActive) {
+            setHasActiveSubscription(true);
+            setIsTrial(response.data.isTrial || false);
+            setStatusMessage("Purchases restored successfully! Redirecting...");
+            setTimeout(() => navigate("/Dashboard"), 1500);
+            restored = true;
+            break;
+          }
+        }
+        if (!restored) {
+          setError("No active subscription found to restore.");
+        }
+      }
+    } catch (err) {
+      console.error("Restore validation error:", err);
+      setError("Failed to restore purchases. Please try again.");
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const handleRedeemOfferCode = async () => {
+    setError(null);
+    setLoading('redeem');
+    try {
+      const result = await StoreKitPlugin.redeemOfferCode();
+      if (result.status === 'success') {
+        setStatusMessage("Redeem sheet opened. Checking subscription...");
+        setTimeout(() => checkExistingSubscription(), 5000);
+      }
+    } catch (err) {
+      console.error("Offer Code redemption error:", err);
+      setError(err.message || "Failed to launch Offer Code redemption.");
+    } finally {
       setLoading(null);
     }
   };
@@ -211,7 +254,7 @@ export default function Paywall() {
           </p>
           {statusMessage && (
             <p className="text-sm text-muted-foreground animate-pulse">
-              Redirecting to Dashboard...
+              {statusMessage}
             </p>
           )}
           <Button onClick={() => navigate("/Dashboard")}>
@@ -221,7 +264,7 @@ export default function Paywall() {
             href="https://apps.apple.com/account/subscriptions"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-muted-foreground hover:text-foreground underline"
+            className="text-sm text-muted-foreground hover:text-foreground underline block pt-2"
           >
             Manage Subscription
           </a>
@@ -287,11 +330,91 @@ export default function Paywall() {
           </div>
         )}
 
-        {/* Subscriptions temporarily unavailable notice */}
-        <div className="text-center p-5 rounded-lg bg-accent/10 border border-accent/20">
-          <p className="text-sm font-medium text-accent">
-            We're putting the finishing touches on subscriptions. They are temporarily unavailable while we complete our billing integration. Thank you for your patience—we look forward to offering subscriptions very soon. Existing subscribers can continue using the app as normal.
-          </p>
+        {/* Plans */}
+        <div className="grid grid-cols-1 gap-4">
+          {/* Monthly Plan */}
+          <Card className="border border-primary/20 relative overflow-hidden bg-card shadow-sm">
+            <CardContent className="p-5 flex flex-col justify-between h-full">
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-foreground">Monthly Plan</h3>
+                <p className="text-xs text-muted-foreground">Flexible monthly billing. Cancel anytime.</p>
+                <div className="flex items-baseline gap-1 pt-2">
+                  <span className="text-3xl font-extrabold text-foreground">
+                    {storeKitProducts.find(p => p.id === 'com.swiftscore.monthly')?.price || "$4.99"}
+                  </span>
+                  <span className="text-sm text-muted-foreground">/month</span>
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
+                  30-day free trial
+                </div>
+              </div>
+              <div className="mt-4 pt-2">
+                <Button
+                  className="w-full font-semibold"
+                  onClick={() => handleSubscribe('monthly')}
+                  disabled={loading !== null}
+                >
+                  {loading === 'monthly' ? "Processing..." : "Start 30-Day Free Trial"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Yearly Plan */}
+          <Card className="border-2 border-primary relative overflow-hidden bg-card shadow-md">
+            <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-[10px] font-bold px-2.5 py-0.5 rounded-bl">
+              Best Value
+            </div>
+            <CardContent className="p-5 flex flex-col justify-between h-full">
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-foreground">Yearly Plan</h3>
+                <p className="text-xs text-muted-foreground">Save over 50% compared to the monthly plan!</p>
+                <div className="flex items-baseline gap-1 pt-2">
+                  <span className="text-3xl font-extrabold text-foreground">
+                    {storeKitProducts.find(p => p.id === 'com.swiftscore.yearly')?.price || "$29.95"}
+                  </span>
+                  <span className="text-sm text-muted-foreground">/year</span>
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
+                  30-day free trial
+                </div>
+              </div>
+              <div className="mt-4 pt-2">
+                <Button
+                  className="w-full font-semibold"
+                  onClick={() => handleSubscribe('yearly')}
+                  disabled={loading !== null}
+                >
+                  {loading === 'yearly' ? "Processing..." : "Start 30-Day Free Trial"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* iOS StoreKit Actions */}
+        <div className="flex flex-col gap-2 pt-2">
+          {isIOSNative && (
+            <Button
+              variant="outline"
+              className="w-full font-medium"
+              onClick={handleRedeemOfferCode}
+              disabled={loading !== null}
+            >
+              {loading === 'redeem' ? "Opening..." : "Redeem Offer Code"}
+            </Button>
+          )}
+
+          {isIOSNative && (
+            <Button
+              variant="ghost"
+              className="w-full text-xs text-muted-foreground hover:text-foreground"
+              onClick={handleRestore}
+              disabled={loading !== null}
+            >
+              {loading === 'restore' ? "Restoring..." : "Restore Purchases"}
+            </Button>
+          )}
         </div>
 
         {/* Links */}
@@ -304,21 +427,6 @@ export default function Paywall() {
             Privacy Policy
           </a>
         </div>
-
-        {isIOSNative && (
-          <Button
-            variant="ghost"
-            className="w-full"
-            onClick={() => {
-              setError(null);
-              setLoading('restore');
-              window.webkit.messageHandlers.restorePurchases.postMessage({});
-            }}
-            disabled={loading !== null}
-          >
-            {loading === 'restore' ? "Restoring..." : "Restore Purchases"}
-          </Button>
-        )}
 
         {/* Back Button */}
         <Button 
