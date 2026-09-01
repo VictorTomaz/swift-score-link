@@ -13,7 +13,9 @@
     "scores": {
       "type": "array",
       "description": "Array of 18 scores for this player",
-      "items": {}
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [

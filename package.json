@@ -10,11 +10,12 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",
     "preview": "vite preview",
-    "ios:sync": "cap sync ios && node scripts/fix-ios-spm-paths.mjs"
+    "ios:sync": "cap sync ios && node scripts/fix-ios-spm-paths.mjs && node scripts/fix-storekit-plugin-registration.mjs"
   },
   "dependencies": {
     "@base44/sdk": "^0.8.41",
     "@base44/vite-plugin": "^1.0.30",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/browser": "^8.0.4",
     "@capacitor/cli": "^8.5.0",
     "@capacitor/core": "^8.5.0",

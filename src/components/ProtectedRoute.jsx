@@ -10,16 +10,18 @@ const Spinner = () => (
 );
 
 export default function ProtectedRoute() {
-  const { isAuthenticated, isLoadingAuth, user } = useAuth();
+  const { isAuthenticated, isLoadingAuth, user, navigateToLogin } = useAuth();
   const [subscriptionChecked, setSubscriptionChecked] = useState(false);
   const [hasAccess, setHasAccess] = useState(false);
 
-  // Auth check — redirect to login if not authenticated
+  // Auth check — redirect to login if not authenticated. Routed through
+  // AuthContext.navigateToLogin so native platforms go to our own /login
+  // screen instead of being redirected out to the published site.
   useEffect(() => {
     if (!isLoadingAuth && !isAuthenticated) {
-      base44.auth.redirectToLogin(window.location.href);
+      navigateToLogin();
     }
-  }, [isLoadingAuth, isAuthenticated]);
+  }, [isLoadingAuth, isAuthenticated, navigateToLogin]);
 
   // Subscription check — redirect to Paywall if no active subscription/trial
   useEffect(() => {

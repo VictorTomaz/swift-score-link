@@ -19,6 +19,7 @@
 		A1B2C3D4E5F6A1B2C3D40002 /* StoreKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A1B2C3D40001 /* StoreKitManager.swift */; };
 		A1B2C3D4E5F6A1B2C3D40004 /* StoreKitPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A1B2C3D40003 /* StoreKitPlugin.swift */; };
 		A1B2C3D4E5F6A1B2C3D40006 /* StoreKitPlugin.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A1B2C3D40005 /* StoreKitPlugin.m */; };
+		A1B2C3D4E5F6A1B2C3D40008 /* Products.storekit in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A1B2C3D40007 /* Products.storekit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +34,10 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		A1B2C3D4E5F6A1B2C3D40001 /* StoreKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitManager.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A1B2C3D40003 /* StoreKitPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitPlugin.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A1B2C3D40005 /* StoreKitPlugin.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = StoreKitPlugin.m; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A1B2C3D40007 /* Products.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Products.storekit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +75,7 @@
 				A1B2C3D4E5F6A1B2C3D40001 /* StoreKitManager.swift */,
 				A1B2C3D4E5F6A1B2C3D40003 /* StoreKitPlugin.swift */,
 				A1B2C3D4E5F6A1B2C3D40005 /* StoreKitPlugin.m */,
+				A1B2C3D4E5F6A1B2C3D40007 /* Products.storekit */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -154,6 +160,7 @@
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
+				A1B2C3D4E5F6A1B2C3D40008 /* Products.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -312,9 +319,26 @@
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				// Debug-only: lets StoreKitTest.framework (used for local .storekit
+				// testing in the Simulator, see AppDelegate's #if DEBUG block) resolve
+				// its runtime dependency on XCTest.framework via an absolute SDK path,
+				// without embedding either framework in the app bundle. Never applied
+				// to Release, so it has zero effect on the TestFlight/App Store archive.
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PLATFORM_DIR)/Developer/Library/Frameworks",
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
+					"$(PLATFORM_DIR)/Developer/Library/Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					"StoreKitTest",
+					"-weak_framework",
+					"XCTest",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";

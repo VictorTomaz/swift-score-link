@@ -1,13 +1,34 @@
 import UIKit
 import Capacitor
+#if DEBUG
+import StoreKitTest
+#endif
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    #if DEBUG
+    var storeKitTestSession: SKTestSession?
+    #endif
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
+        #if DEBUG
+        // Local StoreKit testing (Debug builds only). Resolves XCTest.framework
+        // at runtime via LD_RUNPATH_SEARCH_PATHS (Debug-only build setting) instead
+        // of embedding it — see project.pbxproj comment on the Debug config.
+        do {
+            let session = try SKTestSession(configurationFileNamed: "Products")
+            session.resetToDefaultState()
+            session.disableDialogs = true
+            session.clearTransactions()
+            storeKitTestSession = session
+            print("⚡️ StoreKit local test session loaded (Products.storekit)")
+        } catch {
+            print("⚡️ ❌ Failed to load StoreKit test session: \(error)")
+        }
+        #endif
         return true
     }
 

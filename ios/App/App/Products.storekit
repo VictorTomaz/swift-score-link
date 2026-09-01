@@ -1,0 +1,77 @@
+{
+  "identifier" : "904770AF-F257-4150-9CF0-E2F21DDD413D",
+  "nonRenewingSubscriptions" : [],
+  "products" : [],
+  "settings" : {
+    "_applicationInternalID" : "6739990000",
+    "_developerTeamID" : "KJ7SL99YY3",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "583C518D-5A7C-4ADD-8321-326B1DDEBC1C",
+      "localizations" : [],
+      "name" : "Swift Score Golf Premium",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "8C035851-F178-4322-A301-AFFF06705DB8",
+          "introductoryOffer" : {
+            "internalID" : "94288E2D-F679-4015-9E60-72A441FFD853",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1M"
+          },
+          "localizations" : [
+            {
+              "description" : "Flexible monthly billing. Cancel anytime.",
+              "displayName" : "Monthly Plan",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.swiftscore.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Monthly Plan",
+          "subscriptionGroupID" : "583C518D-5A7C-4ADD-8321-326B1DDEBC1C",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "29.95",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "58A4F59C-9AA3-48CA-9FE8-24FD1F8E4BBC",
+          "introductoryOffer" : {
+            "internalID" : "B1E2C3D4-5F6A-4B7C-8D9E-0F1A2B3C4D5E",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1M"
+          },
+          "localizations" : [
+            {
+              "description" : "Save over 50% compared to the monthly plan!",
+              "displayName" : "Yearly Plan",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.swiftscore.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Yearly Plan",
+          "subscriptionGroupID" : "583C518D-5A7C-4ADD-8321-326B1DDEBC1C",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

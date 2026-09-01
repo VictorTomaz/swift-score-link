@@ -4,16 +4,46 @@ import { Toaster as SonnerToaster } from "@/components/ui/sonner"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { HashRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Browser } from '@capacitor/browser';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import { base44 } from '@/api/base44Client';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { TourProvider } from '@/context/TourContext';
-
+import NativeLogin from '@/pages/NativeLogin';
+import AuthCallback from '@/pages/AuthCallback';
 
 import { lazy, Suspense } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ScrollToTop from '@/components/ScrollToTop';
+
+// Deep link handler for the native Google/Apple login bridge (see
+// AuthCallback.jsx / skill base44-capacitor-social-auth-ios). Lives outside
+// the Router so it fires regardless of which screen is currently mounted.
+const useNativeAuthDeepLink = () => {
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listenerPromise = CapacitorApp.addListener('appUrlOpen', async (data) => {
+      if (data?.url && data.url.includes('access_token')) {
+        const token = new URL(data.url).searchParams.get('access_token');
+        if (token) {
+          localStorage.setItem('base44_access_token', token);
+          localStorage.setItem('token', token);
+          base44.auth.setToken(token);
+          try { await Browser.close(); } catch { /* already closed */ }
+          // '/' — never back to '/auth-callback' or '/login', or the deep link
+          // (or the redirect-to-login effect) fires again in a loop.
+          window.location.href = '/';
+        }
+      }
+    });
+    return () => { listenerPromise.then((l) => l.remove()).catch(() => {}); };
+  }, []);
+};
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const SetupWizard = lazy(() => import('@/pages/SetupWizard'));
@@ -53,6 +83,8 @@ const AuthenticatedApp = () => {
         <Route path="/public-results/:roundId" element={<PublicResults />} />
         <Route path="/TermsAndPrivacy" element={<TermsAndPrivacy />} />
         <Route path="/Paywall" element={<Paywall />} />
+        <Route path="/login" element={<NativeLogin />} />
+        <Route path="/auth-callback" element={<AuthCallback />} />
 
         {/* Protected routes — must be logged in */}
         <Route element={<ProtectedRoute />}>
@@ -80,6 +112,7 @@ const AuthenticatedApp = () => {
 };
 
 function App() {
+  useNativeAuthDeepLink();
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
