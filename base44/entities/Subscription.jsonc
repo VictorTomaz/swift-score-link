@@ -8,7 +8,7 @@
     },
     "product_id": {
       "type": "string",
-      "description": "Apple product ID (e.g., com.swiftscore.monthly)"
+      "description": "Apple product ID (e.g., com.swiftscoregolf.monthly)"
     },
     "subscription_type": {
       "type": "string",

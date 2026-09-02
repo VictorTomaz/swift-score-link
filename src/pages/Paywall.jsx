@@ -100,7 +100,7 @@ export default function Paywall() {
 
     // iOS native app with StoreKit 2 bridge
     if (isIOSNative) {
-      const productId = planType === 'yearly' ? 'com.swiftscore.yearly' : 'com.swiftscore.monthly';
+      const productId = planType === 'yearly' ? 'com.swiftscoregolf.yearly' : 'com.swiftscoregolf.monthly';
       iosProductIdRef.current = productId;
       try {
         const result = await StoreKitPlugin.purchaseSubscription({ productId });
@@ -185,7 +185,7 @@ export default function Paywall() {
         let restored = false;
         
         // Loop a verificação para os dois produtos
-        for (const pid of ['com.swiftscore.yearly', 'com.swiftscore.monthly']) {
+        for (const pid of ['com.swiftscoregolf.yearly', 'com.swiftscoregolf.monthly']) {
           const response = await base44.functions.invoke('validateAppleReceipt', {
             receiptData: result.receiptData,
             productId: pid,
@@ -340,7 +340,7 @@ export default function Paywall() {
                 <p className="text-xs text-muted-foreground">Flexible monthly billing. Cancel anytime.</p>
                 <div className="flex items-baseline gap-1 pt-2">
                   <span className="text-3xl font-extrabold text-foreground">
-                    {storeKitProducts.find(p => p.id === 'com.swiftscore.monthly')?.price || "$4.99"}
+                    {storeKitProducts.find(p => p.id === 'com.swiftscoregolf.monthly')?.price || "$4.99"}
                   </span>
                   <span className="text-sm text-muted-foreground">/month</span>
                 </div>
@@ -371,7 +371,7 @@ export default function Paywall() {
                 <p className="text-xs text-muted-foreground">Save over 50% compared to the monthly plan!</p>
                 <div className="flex items-baseline gap-1 pt-2">
                   <span className="text-3xl font-extrabold text-foreground">
-                    {storeKitProducts.find(p => p.id === 'com.swiftscore.yearly')?.price || "$29.95"}
+                    {storeKitProducts.find(p => p.id === 'com.swiftscoregolf.yearly')?.price || "$29.95"}
                   </span>
                   <span className="text-sm text-muted-foreground">/year</span>
                 </div>

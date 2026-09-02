@@ -30,8 +30,8 @@ Follow `docs/IOS_STOREKIT_INTEGRATION.md` for complete Swift implementation.
 
 1. **App Store Connect Setup**
    - [ ] Create Subscription Group: "Swift Score Premium"
-   - [ ] Create Product: `com.swiftscore.monthly` ($2.99/month, 30-day trial)
-   - [ ] Create Product: `com.swiftscore.yearly` ($29.99/year, 30-day trial)
+   - [ ] Create Product: `com.swiftscoregolf.monthly` ($2.99/month, 30-day trial)
+   - [ ] Create Product: `com.swiftscoregolf.yearly` ($29.99/year, 30-day trial)
    - [ ] Submit for review
 
 2. **Xcode Project Setup**
@@ -68,8 +68,8 @@ Follow `docs/IOS_STOREKIT_INTEGRATION.md` for complete Swift implementation.
 
 | Plan | Product ID | Price | Trial |
 |------|------------|-------|-------|
-| Monthly | `com.swiftscore.monthly` | $2.99/month | 30 days |
-| Yearly | `com.swiftscore.yearly` | $29.99/year | 30 days |
+| Monthly | `com.swiftscoregolf.monthly` | $2.99/month | 30 days |
+| Yearly | `com.swiftscoregolf.yearly` | $29.99/year | 30 days |
 
 ⚠️ **IMPORTANT**: Product IDs in App Store Connect MUST exactly match these strings.
 

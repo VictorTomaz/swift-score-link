@@ -16,8 +16,8 @@ The web app communicates with the native iOS layer via `webkit.messageHandlers`.
 
 1. **App Store Connect Setup**:
    - Create two Subscription products in App Store Connect:
-     - Product ID: `com.swiftscore.monthly` - $2.99/month
-     - Product ID: `com.swiftscore.yearly` - $29.99/year
+     - Product ID: `com.swiftscoregolf.monthly` - $2.99/month
+     - Product ID: `com.swiftscoregolf.yearly` - $29.99/year
    - Enable **Free Trial** (30 days) for both subscriptions
    - Create a Subscription Group (e.g., "Swift Score Premium")
 
@@ -50,8 +50,8 @@ class StoreKitManager: NSObject, ObservableObject {
     
     // Product IDs must match App Store Connect
     private let productIds: Set<String> = [
-        "com.swiftscore.monthly",
-        "com.swiftscore.yearly"
+        "com.swiftscoregolf.monthly",
+        "com.swiftscoregolf.yearly"
     ]
     
     private var products: [String: SKProduct] = [:]
@@ -331,7 +331,7 @@ The web app calls the `validateAppleReceipt` backend function which:
 
 - [ ] Subscriptions created in App Store Connect
 - [ ] Free trial configured (30 days)
-- [ ] Product IDs match code (`com.swiftscore.monthly`, `com.swiftscore.yearly`)
+- [ ] Product IDs match code (`com.swiftscoregolf.monthly`, `com.swiftscoregolf.yearly`)
 - [ ] StoreKit framework added to target
 - [ ] Message handlers configured in WKWebView
 - [ ] Transaction observer added to payment queue

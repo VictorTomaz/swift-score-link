@@ -36,7 +36,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.swiftscore.monthly",
+          "productID" : "com.swiftscoregolf.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Monthly Plan",
           "subscriptionGroupID" : "583C518D-5A7C-4ADD-8321-326B1DDEBC1C",
@@ -61,7 +61,7 @@
               "locale" : "en_US"
             }
           ],
-          "productID" : "com.swiftscore.yearly",
+          "productID" : "com.swiftscoregolf.yearly",
           "recurringSubscriptionPeriod" : "P1Y",
           "referenceName" : "Yearly Plan",
           "subscriptionGroupID" : "583C518D-5A7C-4ADD-8321-326B1DDEBC1C",
