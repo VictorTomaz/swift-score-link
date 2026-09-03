@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
     const transactionId = transaction.transactionId;
     const originalTransactionId = transaction.originalTransactionId;
     
-    if (bundleId !== 'com.swiftscore.golf') {
+    if (bundleId !== 'com.base69bb019558d96a11fbfbddce.app') {
       return Response.json({ error: 'Invalid bundle ID in webhook transaction' }, { status: 400 });
     }
     

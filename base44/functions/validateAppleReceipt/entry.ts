@@ -106,7 +106,7 @@ Deno.serve(async (req) => {
       try {
         // Criptograficamente verifica a assinatura e cadeia do token JWS do StoreKit 2
         const decoded = await verifyAppleJWS(jwsTransaction);
-        if (decoded.bundleId !== 'com.swiftscore.golf') {
+        if (decoded.bundleId !== 'com.base69bb019558d96a11fbfbddce.app') {
           return Response.json({ error: 'Invalid bundle ID in transaction' }, { status: 400 });
         }
 

@@ -98,8 +98,8 @@ jobs:
           fi
           BUNDLE_ID_IN_PROJECT=$(grep -m1 "PRODUCT_BUNDLE_IDENTIFIER" ios/App/App.xcodeproj/project.pbxproj | sed -E 's/.*= (.*);/\1/' | tr -d '"')
           echo "Bundle ID in project: $BUNDLE_ID_IN_PROJECT"
-          if [ "$BUNDLE_ID_IN_PROJECT" != "com.swiftscore.golf" ]; then
-            echo "Error: Bundle ID mismatch. Expected com.swiftscore.golf, found $BUNDLE_ID_IN_PROJECT"
+          if [ "$BUNDLE_ID_IN_PROJECT" != "com.base69bb019558d96a11fbfbddce.app" ]; then
+            echo "Error: Bundle ID mismatch. Expected com.base69bb019558d96a11fbfbddce.app, found $BUNDLE_ID_IN_PROJECT"
             exit 1
           fi
 
@@ -118,7 +118,7 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
-            PRODUCT_BUNDLE_IDENTIFIER=com.swiftscore.golf
+            PRODUCT_BUNDLE_IDENTIFIER=com.base69bb019558d96a11fbfbddce.app
 
       - name: Create ExportOptions.plist
         env:
@@ -139,7 +139,7 @@ jobs:
               <string>$DEVELOPMENT_TEAM</string>
               <key>provisioningProfiles</key>
               <dict>
-                  <key>com.swiftscore.golf</key>
+                  <key>com.base69bb019558d96a11fbfbddce.app</key>
                   <string>$PROFILE_NAME</string>
               </dict>
           </dict>
