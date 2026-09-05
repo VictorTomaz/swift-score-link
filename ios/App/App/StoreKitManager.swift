@@ -9,7 +9,7 @@ public class StoreKitManager {
     private var updateListenerTask: Task<Void, Never>? = nil
     
     // Product IDs must match App Store Connect
-    private let productIdentifiers = Set(["com.swiftscore.monthly", "com.swiftscore.yearly"])
+    private let productIdentifiers = Set(["com.swiftscoregolf.monthly", "com.swiftscoregolf.yearly"])
     
     private init() {
         startTransactionListener()
@@ -84,6 +84,23 @@ public class StoreKitManager {
             do {
                 let transaction = try checkVerified(result)
                 activeTransactions.append(transaction)
+            } catch {
+                print("Entitlement verification failed: \(error.localizedDescription)")
+            }
+        }
+        return activeTransactions
+    }
+
+    // Like getActiveEntitlements(), but also keeps the signed JWS representation
+    // of each transaction — needed so restore can be verified server-side via
+    // StoreKit 2 JWS (same path as a fresh purchase), instead of falling back to
+    // the deprecated legacy verifyReceipt API.
+    func getActiveEntitlementsWithJWS() async -> [(transaction: Transaction, jws: String)] {
+        var activeTransactions: [(Transaction, String)] = []
+        for await result in Transaction.currentEntitlements {
+            do {
+                let transaction = try checkVerified(result)
+                activeTransactions.append((transaction, result.jwsRepresentation))
             } catch {
                 print("Entitlement verification failed: \(error.localizedDescription)")
             }

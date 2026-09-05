@@ -141,14 +141,16 @@ public class StoreKitPlugin: CAPPlugin {
             do {
                 try await manager.restorePurchases()
                 let receiptData = manager.getReceiptData() ?? ""
-                
-                let activeEntitlements = await manager.getActiveEntitlements()
-                let entitlementsList = activeEntitlements.map { transaction -> [String: Any] in
+
+                let activeEntitlements = await manager.getActiveEntitlementsWithJWS()
+                let entitlementsList = activeEntitlements.map { entry -> [String: Any] in
+                    let (transaction, jws) = entry
                     return [
                         "productId": transaction.productID,
                         "transactionId": String(transaction.id),
                         "originalTransactionId": String(transaction.originalID),
-                        "expiresDate": transaction.expirationDate?.timeIntervalSince1970 ?? 0
+                        "expiresDate": transaction.expirationDate?.timeIntervalSince1970 ?? 0,
+                        "jwsTransaction": jws
                     ]
                 }
                 

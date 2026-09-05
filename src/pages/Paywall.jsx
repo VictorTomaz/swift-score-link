@@ -183,12 +183,14 @@ export default function Paywall() {
       if (result.status === 'success') {
         setStatusMessage("Restoring purchases...");
         let restored = false;
-        
-        // Loop a verificação para os dois produtos
-        for (const pid of ['com.swiftscoregolf.yearly', 'com.swiftscoregolf.monthly']) {
+
+        // Verifica cada entitlement ativo via JWS (StoreKit 2), mesmo caminho
+        // usado na compra — evita depender da API legada verifyReceipt.
+        const entitlements = (result.entitlements || []).filter(ent => ent.jwsTransaction);
+        for (const ent of entitlements) {
           const response = await base44.functions.invoke('validateAppleReceipt', {
-            receiptData: result.receiptData,
-            productId: pid,
+            jwsTransaction: ent.jwsTransaction,
+            productId: ent.productId,
           });
           if (response.data.valid && response.data.isActive) {
             setHasActiveSubscription(true);

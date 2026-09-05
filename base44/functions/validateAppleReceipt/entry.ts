@@ -107,6 +107,7 @@ Deno.serve(async (req) => {
         // Criptograficamente verifica a assinatura e cadeia do token JWS do StoreKit 2
         const decoded = await verifyAppleJWS(jwsTransaction);
         if (decoded.bundleId !== 'com.base69bb019558d96a11fbfbddce.app') {
+          console.error('validateAppleReceipt: bundle ID mismatch, got', decoded.bundleId);
           return Response.json({ error: 'Invalid bundle ID in transaction' }, { status: 400 });
         }
 
@@ -164,6 +165,7 @@ Deno.serve(async (req) => {
           subscription,
         });
       } catch (err: any) {
+        console.error('validateAppleReceipt: JWS verification failed:', err.message, err.stack);
         return Response.json({ error: 'Failed to process JWS: ' + err.message }, { status: 400 });
       }
     }
@@ -261,6 +263,7 @@ Deno.serve(async (req) => {
       } else if (result.status === 21007 && !env.isSandbox) {
         continue;
       } else {
+        console.error('validateAppleReceipt: legacy verifyReceipt failed with status', result.status, 'isSandbox:', env.isSandbox);
         return Response.json({
           valid: false,
           error: `Apple validation failed: ${result.status}`,
@@ -273,8 +276,9 @@ Deno.serve(async (req) => {
       valid: false,
       error: 'Receipt validation failed',
     }, { status: 400 });
-    
+
   } catch (error: any) {
+    console.error('validateAppleReceipt: unexpected error:', error.message, error.stack);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

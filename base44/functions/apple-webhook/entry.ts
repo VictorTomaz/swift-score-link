@@ -90,6 +90,7 @@ async function verifyAppleJWS(jws: string): Promise<any> {
 }
 
 Deno.serve(async (req) => {
+  console.log('Apple Webhook: invocation received');
   try {
     const base44 = createClientFromRequest(req);
     const body = await req.json();
@@ -174,7 +175,7 @@ Deno.serve(async (req) => {
     
     return Response.json({ received: true });
   } catch (error: any) {
-    console.error('Apple webhook validation error:', error.message);
+    console.error('Apple webhook validation error:', error.message, error.stack);
     return Response.json({ error: 'Signature verification or validation failed: ' + error.message }, { status: 401 });
   }
 });
