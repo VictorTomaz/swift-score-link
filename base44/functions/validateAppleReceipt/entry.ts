@@ -89,6 +89,19 @@ async function verifyAppleJWS(jws: string): Promise<any> {
   return JSON.parse(jsonString);
 }
 
+// Persists a diagnostic record to the IapErrorLog entity alongside the
+// console.error — `base44 logs` has proven unreliable at surfacing these,
+// so this is a durable, queryable fallback (base44.entities.IapErrorLog.list()
+// via `base44 exec --privileged`). Never let a logging failure break the
+// actual error response.
+async function logIapError(base44: any, fields: { path: string; error_message: string; user_id?: string; product_id?: string }) {
+  try {
+    await base44.asServiceRole.entities.IapErrorLog.create({ source: 'validateAppleReceipt', ...fields });
+  } catch (logErr: any) {
+    console.error('validateAppleReceipt: failed to write IapErrorLog:', logErr.message);
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -96,7 +109,7 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { receiptData, jwsTransaction, productId } = await req.json();
-    
+
     if (!productId) {
       return Response.json({ error: 'productId is required' }, { status: 400 });
     }
@@ -108,6 +121,7 @@ Deno.serve(async (req) => {
         const decoded = await verifyAppleJWS(jwsTransaction);
         if (decoded.bundleId !== 'com.base69bb019558d96a11fbfbddce.app') {
           console.error('validateAppleReceipt: bundle ID mismatch, got', decoded.bundleId);
+          await logIapError(base44, { path: 'jws', error_message: `Bundle ID mismatch: ${decoded.bundleId}`, user_id: user.id, product_id: productId });
           return Response.json({ error: 'Invalid bundle ID in transaction' }, { status: 400 });
         }
 
@@ -143,17 +157,17 @@ Deno.serve(async (req) => {
           subscriptionData.trial_end_date = expiresDate.toISOString();
         }
 
-        const existingSubs = await base44.entities.Subscription.filter({
+        const existingSubs = await base44.asServiceRole.entities.Subscription.filter({
           user_id: user.id,
           product_id: productId
         });
 
         let subscription;
         if (existingSubs && existingSubs.length > 0) {
-          await base44.entities.Subscription.update(existingSubs[0].id, subscriptionData);
-          subscription = await base44.entities.Subscription.get(existingSubs[0].id);
+          await base44.asServiceRole.entities.Subscription.update(existingSubs[0].id, subscriptionData);
+          subscription = await base44.asServiceRole.entities.Subscription.get(existingSubs[0].id);
         } else {
-          subscription = await base44.entities.Subscription.create(subscriptionData);
+          subscription = await base44.asServiceRole.entities.Subscription.create(subscriptionData);
         }
 
         return Response.json({
@@ -166,6 +180,7 @@ Deno.serve(async (req) => {
         });
       } catch (err: any) {
         console.error('validateAppleReceipt: JWS verification failed:', err.message, err.stack);
+        await logIapError(base44, { path: 'jws', error_message: err.message, user_id: user.id, product_id: productId });
         return Response.json({ error: 'Failed to process JWS: ' + err.message }, { status: 400 });
       }
     }
@@ -219,7 +234,7 @@ Deno.serve(async (req) => {
           ? new Date(Number(subscriptionInfo.original_purchase_date_ms) + (30 * 24 * 60 * 60 * 1000))
           : null;
 
-        const existingSubs = await base44.entities.Subscription.filter({
+        const existingSubs = await base44.asServiceRole.entities.Subscription.filter({
           user_id: user.id,
           product_id: productId
         });
@@ -246,10 +261,10 @@ Deno.serve(async (req) => {
 
         let subscription;
         if (existingSubs && existingSubs.length > 0) {
-          await base44.entities.Subscription.update(existingSubs[0].id, subscriptionData);
-          subscription = await base44.entities.Subscription.get(existingSubs[0].id);
+          await base44.asServiceRole.entities.Subscription.update(existingSubs[0].id, subscriptionData);
+          subscription = await base44.asServiceRole.entities.Subscription.get(existingSubs[0].id);
         } else {
-          subscription = await base44.entities.Subscription.create(subscriptionData);
+          subscription = await base44.asServiceRole.entities.Subscription.create(subscriptionData);
         }
 
         return Response.json({
@@ -264,6 +279,7 @@ Deno.serve(async (req) => {
         continue;
       } else {
         console.error('validateAppleReceipt: legacy verifyReceipt failed with status', result.status, 'isSandbox:', env.isSandbox);
+        await logIapError(base44, { path: 'legacy_receipt', error_message: `Apple status ${result.status} (isSandbox: ${env.isSandbox})`, user_id: user.id, product_id: productId });
         return Response.json({
           valid: false,
           error: `Apple validation failed: ${result.status}`,
@@ -272,6 +288,7 @@ Deno.serve(async (req) => {
       }
     }
 
+    await logIapError(base44, { path: 'legacy_receipt', error_message: 'Both production and sandbox verifyReceipt exhausted without a match', user_id: user.id, product_id: productId });
     return Response.json({
       valid: false,
       error: 'Receipt validation failed',
@@ -279,6 +296,10 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('validateAppleReceipt: unexpected error:', error.message, error.stack);
+    try {
+      const base44 = createClientFromRequest(req);
+      await logIapError(base44, { path: 'unexpected', error_message: error.message });
+    } catch { /* best effort */ }
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

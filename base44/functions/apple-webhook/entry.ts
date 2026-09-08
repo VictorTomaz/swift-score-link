@@ -121,6 +121,10 @@ Deno.serve(async (req) => {
     const originalTransactionId = transaction.originalTransactionId;
     
     if (bundleId !== 'com.base69bb019558d96a11fbfbddce.app') {
+      console.error('Apple Webhook: bundle ID mismatch, got', bundleId);
+      try {
+        await base44.asServiceRole.entities.IapErrorLog.create({ source: 'apple-webhook', path: 'webhook', error_message: `Bundle ID mismatch: ${bundleId}`, product_id: productId });
+      } catch (logErr: any) { console.error('Apple Webhook: failed to write IapErrorLog:', logErr.message); }
       return Response.json({ error: 'Invalid bundle ID in webhook transaction' }, { status: 400 });
     }
     
@@ -176,6 +180,10 @@ Deno.serve(async (req) => {
     return Response.json({ received: true });
   } catch (error: any) {
     console.error('Apple webhook validation error:', error.message, error.stack);
+    try {
+      const base44 = createClientFromRequest(req);
+      await base44.asServiceRole.entities.IapErrorLog.create({ source: 'apple-webhook', path: 'unexpected', error_message: error.message });
+    } catch (logErr: any) { console.error('Apple Webhook: failed to write IapErrorLog:', logErr.message); }
     return Response.json({ error: 'Signature verification or validation failed: ' + error.message }, { status: 401 });
   }
 });

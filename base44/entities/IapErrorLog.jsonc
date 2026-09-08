@@ -1,0 +1,56 @@
+{
+  "name": "IapErrorLog",
+  "type": "object",
+  "description": "Diagnostic record of a failed Apple purchase/webhook validation. Written by validateAppleReceipt and apple-webhook alongside their console.error calls, because `base44 logs` has proven unreliable at surfacing those — this is a durable, queryable fallback (base44.entities.IapErrorLog.list()) for finding out what actually went wrong.",
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": [
+        "validateAppleReceipt",
+        "apple-webhook"
+      ],
+      "description": "Which function produced this error"
+    },
+    "path": {
+      "type": "string",
+      "enum": [
+        "jws",
+        "legacy_receipt",
+        "webhook",
+        "unexpected"
+      ],
+      "description": "Which code path was executing when it failed"
+    },
+    "error_message": {
+      "type": "string",
+      "description": "The caught error's message (or Apple's legacy verifyReceipt status code)"
+    },
+    "user_id": {
+      "type": "string",
+      "description": "Authenticated user id, if available at the point of failure"
+    },
+    "product_id": {
+      "type": "string",
+      "description": "Product ID being validated, if available"
+    }
+  },
+  "required": [
+    "source",
+    "path",
+    "error_message"
+  ],
+  "rls": {
+    "create": null,
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": null,
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

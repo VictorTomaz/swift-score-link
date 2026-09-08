@@ -125,8 +125,12 @@ export default function Paywall() {
           setError("Purchase is pending parental or institutional approval.");
         }
       } catch (err) {
-        console.error("StoreKit purchase error:", err);
-        setError(err.message || "Unable to start purchase. Please try again.");
+        // err.message alone is axios's generic "Request failed with status
+        // code 400" — the actual cause is in the response body our backend
+        // functions send back (validateAppleReceipt's console.error'd errors).
+        const backendMessage = err?.response?.data?.error;
+        console.error("StoreKit purchase error:", backendMessage || err.message, err);
+        setError(backendMessage || err.message || "Unable to start purchase. Please try again.");
       } finally {
         setLoading(null);
       }
@@ -206,8 +210,15 @@ export default function Paywall() {
         }
       }
     } catch (err) {
-      console.error("Restore validation error:", err);
-      setError(err.message ? `Failed to restore purchases: ${err.message}` : "Failed to restore purchases. Please try again.");
+      // Same as purchase: err.message alone is axios's generic "Request
+      // failed with status code 400" when it came from validateAppleReceipt —
+      // the real cause is in the response body (or, if the native
+      // restorePurchases() call itself threw, err.message already has the
+      // StoreKitError/NSError detail from StoreKitPlugin.swift).
+      const backendMessage = err?.response?.data?.error;
+      const detail = backendMessage || err.message;
+      console.error("Restore validation error:", detail, err);
+      setError(detail ? `Failed to restore purchases: ${detail}` : "Failed to restore purchases. Please try again.");
     } finally {
       setLoading(null);
     }
