@@ -110,7 +110,19 @@ Deno.serve(async (req) => {
 
     const { receiptData, jwsTransaction, productId } = await req.json();
 
+    // Unconditional trace of every call — we need to see exactly what's being
+    // sent (not just error paths) to explain bursts of calls / unexpected
+    // parameter shapes. Trim once validateAppleReceipt is confirmed stable.
+    await logIapError(base44, {
+      path: 'request_received',
+      error_message: `productId=${productId ?? '(missing)'} hasReceiptData=${!!receiptData} hasJwsTransaction=${!!jwsTransaction} jwsLen=${jwsTransaction?.length ?? 0}`,
+      user_id: user.id,
+      product_id: productId,
+    });
+
     if (!productId) {
+      console.error('validateAppleReceipt: productId missing');
+      await logIapError(base44, { path: 'unexpected', error_message: 'productId is required', user_id: user.id });
       return Response.json({ error: 'productId is required' }, { status: 400 });
     }
 
