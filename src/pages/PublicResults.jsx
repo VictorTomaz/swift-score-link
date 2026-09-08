@@ -114,14 +114,18 @@ export default function PublicResults() {
               ...(!holdMainPayouts && results.net_pot > 0 ? [{ label: "Net Pot", value: results.net_pot, places: results.net_places, tip: "The portion of the main pot allocated to net score standings." }] : []),
               ...(results.side_pot > 0 ? [{ label: "Side Games", value: results.side_pot, tip: "Pot allocated to side games like skins and KPs." }] : []),
               ...(results.kp_separate_pot > 0 ? [{ label: "KP Pot", value: results.kp_separate_pot, tip: "Separate pot funded by KP buy-ins." }] : []),
+              ...(results.gross_skins_separate_pot > 0 ? [{ label: "Gross Skins", value: results.gross_skins_separate_pot, tip: "Separate pot funded by gross skins buy-ins." }] : []),
+              ...(results.net_skins_separate_pot > 0 ? [{ label: "Net Skins", value: results.net_skins_separate_pot, tip: "Separate pot funded by net skins buy-ins." }] : []),
               ...(results.deuce_pot > 0 ? [{ label: "Deuce Pot", value: results.deuce_pot, tip: "Separate pot funded by deuce buy-ins." }] : []),
+              ...((results.added_money || round.added_money) > 0 ? [{ label: results.added_money_label || round.added_money_label || "Added Money", value: results.added_money || round.added_money || 0, tip: "Lump sum folded into the main gross/net pot alongside player buy-ins." }] : []),
+              { label: "Total Pot", value: results.total_pot, isTotal: true, tip: "Total pot from all player buy-ins plus added money." },
             ].map(item => (
-              <Card key={item.label} className="border-0 shadow-sm">
+              <Card key={item.label} className={`border-0 shadow-sm ${item.isTotal ? 'bg-primary/10 border border-primary/30' : ''}`}>
                 <CardContent className="p-3 text-center">
-                  <p className="text-[10px] text-muted-foreground font-medium flex items-center justify-center gap-0.5">
+                  <p className={`text-[10px] font-medium flex items-center justify-center gap-0.5 ${item.isTotal ? 'text-primary' : 'text-muted-foreground'}`}>
                     {item.label}{item.tip && <InfoTooltip text={item.tip} />}
                   </p>
-                  <p className="text-base font-bold text-foreground mt-0.5">${Math.round(item.value || 0)}</p>
+                  <p className={`font-bold mt-0.5 ${item.isTotal ? 'text-primary text-lg' : 'text-foreground text-base'}`}>${Math.round(item.value || 0)}</p>
                   {item.places && item.places.length > 0 && (
                     <p className="text-[10px] text-muted-foreground mt-1">{item.places.map(p => `$${Math.round(p)}`).join(' + ')}</p>
                   )}

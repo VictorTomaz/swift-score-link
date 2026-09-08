@@ -109,6 +109,14 @@
     @apply min-h-[44px];
   }
 
+  /* iOS Safari with color-scheme: dark overrides input text color via
+     -webkit-text-fill-color, making typed text invisible on dark backgrounds.
+     Force it to follow the CSS color property so text-foreground always applies. */
+  input, textarea, select {
+    -webkit-text-fill-color: hsl(var(--foreground));
+    caret-color: hsl(var(--foreground));
+  }
+
   /* Content areas — `none` fully suppresses native overscroll/rubber-band
      so the custom JS pull-to-refresh handler is the only pull-down behavior */
   main, [role="main"] {

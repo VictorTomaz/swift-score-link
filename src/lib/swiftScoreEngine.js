@@ -4,6 +4,9 @@
  * Supports SWIFT_SCORE_11, CUSTOM, and OFF modes.
  */
 
+import { isPoolNone } from "@/lib/sideGamePools";
+import { netHandicapScale, scaleHandicap } from "@/lib/vegasFormat";
+
 // ─── VALIDATION ──────────────────────────────────────────────
 export function validateScorePacket(round) {
   const issues = [];
@@ -89,7 +92,7 @@ function getHoleAchievements(scores, par) {
 }
 
 // ─── NET SCORE HELPERS ───────────────────────────────────────
-function getPlayerNetScores(player, holeHandicapIndexes, teeSets) {
+function getPlayerNetScores(player, holeHandicapIndexes, teeSets, hcpScale = 1) {
   // Only use tee-specific data when Auto Handicap Adjustment was ON (course_handicap is non-null).
   // In manual mode (course_handicap is null), tee blocks are ignored entirely.
   const useTeeSets = player.course_handicap != null;
@@ -113,6 +116,9 @@ function getPlayerNetScores(player, holeHandicapIndexes, teeSets) {
     const h = Number(player.handicap ?? 0);
     storedCH = player.is_plus_handicap ? -Math.abs(h) : Math.abs(h);
   }
+  // Apply the round's handicap allowance so individual net side games use the
+  // SAME basis as the main event (see netHandicapScale).
+  storedCH = scaleHandicap(storedCH, hcpScale);
 
   // Determine if plus handicap: trust is_plus_handicap flag, OR if computed/stored course_handicap is negative
   const isPlus = !!player.is_plus_handicap || (storedCH != null && storedCH < 0);
@@ -244,6 +250,25 @@ function applyStableford(results, round) {
 
 // ─── SKINS HELPERS ───────────────────────────────────────────
 
+/**
+ * Returns the effective player pool for a separate-buy-in side game.
+ * - undefined/null/[] (never configured): all players.
+ * - [POOL_NONE]: explicitly cleared — nobody participates and the pot is $0.
+ * - [id, ...]: only those players
+ */
+function getSkinsPoolPlayers(allPlayers, poolIds) {
+  if (isPoolNone(poolIds)) return [];
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return allPlayers;
+  return allPlayers.filter(p => poolIds.includes(p.player_id));
+}
+
+/** Returns the count used to size a separate-buy-in side-game pot. */
+function getSkinsPoolCount(fallbackCount, poolIds) {
+  if (isPoolNone(poolIds)) return 0;
+  if (!Array.isArray(poolIds) || poolIds.length === 0) return fallbackCount;
+  return poolIds.length;
+}
+
 /** Returns per-hole winner info (or null if tied). Excludes X scores. Players with X can still participate. */
 function getHoleWinners(holeScoresList, allPlayersCanWin = false) {
   // holeScoresList: array of {player_id, name, score} for each of 18 holes
@@ -263,48 +288,29 @@ function getHoleWinners(holeScoresList, allPlayersCanWin = false) {
 
 /** Build per-hole score list for gross skins. Only includes players in the skins pool if separate buy-in is active. */
 function grossHoleScores(round) {
-  if (round.gross_skins_separate_buy_in) {
-    // Separate buy-in: only selected players compete. Empty list = all players.
-    const poolIds = round.gross_skins_player_ids || [];
-    const players = poolIds.length > 0
-      ? round.players.filter(p => poolIds.includes(p.player_id))
-      : round.players;
-    return Array.from({ length: 18 }, (_, h) =>
-      players.map(p => ({ player_id: p.player_id, name: p.name, score: normalizeScore(p.scores[h]) }))
-    );
-  }
-  // Shared pot: all players compete
+  const players = getSkinsPoolPlayers(round.players, round.gross_skins_player_ids);
   return Array.from({ length: 18 }, (_, h) =>
-    round.players.map(p => ({ player_id: p.player_id, name: p.name, score: normalizeScore(p.scores[h]) }))
+    players.map(p => ({ player_id: p.player_id, name: p.name, score: normalizeScore(p.scores[h]) }))
   );
 }
 
 /** Build per-hole score list for net skins. Only includes players in the skins pool if separate buy-in is active. */
 function netHoleScores(round) {
-  if (round.net_skins_separate_buy_in) {
-    const poolIds = round.net_skins_player_ids || [];
-    const players = poolIds.length > 0
-      ? round.players.filter(p => poolIds.includes(p.player_id))
-      : round.players;
-    const allNet = {};
-    players.forEach(p => { allNet[p.player_id] = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets); });
-    return Array.from({ length: 18 }, (_, h) =>
-      players.map(p => ({ player_id: p.player_id, name: p.name, score: allNet[p.player_id][h] }))
-    );
-  }
-  // Shared pot: all players compete
+  const players = getSkinsPoolPlayers(round.players, round.net_skins_player_ids);
+  const scale = netHandicapScale(round);
   const allNet = {};
-  round.players.forEach(p => { allNet[p.player_id] = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets); });
+  players.forEach(p => { allNet[p.player_id] = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets, scale); });
   return Array.from({ length: 18 }, (_, h) =>
-    round.players.map(p => ({ player_id: p.player_id, name: p.name, score: allNet[p.player_id][h] }))
+    players.map(p => ({ player_id: p.player_id, name: p.name, score: allNet[p.player_id][h] }))
   );
 }
 
 /** Build net achievements map: player_id -> array of 18 achievement objects based on net scores vs par */
 function getNetAchievements(round) {
   const result = {};
+  const scale = netHandicapScale(round);
   round.players.forEach(p => {
-    const netScores = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets);
+    const netScores = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets, scale);
     result[p.player_id] = netScores.map((score, i) => {
       if (score === 'X') return { type: 'DQ', display: 'DQ' };
       return getAchievementForDiff(score - round.par[i]);
@@ -467,12 +473,19 @@ function computeKPs(round, kpPoolAmount) {
     // Filter out empty KP entries
     const validKpWinners = (round.kp_winners || []).filter(kp => kp.player_id);
     if (validKpWinners.length > 0) {
+      // Resolve player names from the roster so KP results always carry a
+      // display name — kp_winners entries only store { hole, player_id }.
+      // Check both round.players (filtered) and round.all_players (full
+      // signup roster, which includes withdrawn players still in the pool).
+      const roster = round.all_players || round.players || [];
+      const nameFor = (pid) => roster.find(p => p.player_id === pid)?.name;
+
       // Calculate exact per-KP amount and round it once
       perKpAmount = kpPoolAmount / validKpWinners.length;
       
       // Each KP entry gets exactly the same amount
       validKpWinners.forEach(kp => {
-        kpResults.push(kp);
+        kpResults.push({ ...kp, name: kp.name || nameFor(kp.player_id) });
         kpPayouts[kp.player_id] = (kpPayouts[kp.player_id] || 0) + perKpAmount;
       });
     }
@@ -489,14 +502,10 @@ function computeDeuces(round) {
   
   if (round.deuce_pot_enabled) {
     // For deuce detection: only players with complete scores
-    const deucePlayers = round.deuce_player_ids?.length > 0
-      ? round.players.filter(p => round.deuce_player_ids.includes(p.player_id))
-      : round.players;
+    const deucePlayers = getSkinsPoolPlayers(round.players, round.deuce_player_ids);
     // For pot calculation: ALL signed-up players (including those without complete scores — they still paid in)
     const allPlayers = round.all_players || round.players;
-    const deuceSignupPlayers = round.deuce_player_ids?.length > 0
-      ? allPlayers.filter(p => round.deuce_player_ids.includes(p.player_id))
-      : allPlayers;
+    const deuceSignupPlayers = getSkinsPoolPlayers(allPlayers, round.deuce_player_ids);
     deucePlayers.forEach(p => {
       p.scores.forEach((score, h) => {
         const normalizedScore = normalizeScore(score);
@@ -1014,7 +1023,8 @@ function computeSwiftScore11(round) {
   // mid-round still paid their buy-in, so the pot must include them. round.players is the
   // filtered list (only those with complete scores) and would undercount the pot.
   const signupCount = (round.all_players || round.players).length;
-  const totalPot = round.buy_in * signupCount;
+  const addedMoney = round.added_money || 0;
+  const totalPot = round.buy_in * signupCount + addedMoney;
   const rawPayouts = SWIFT_11_PAYOUTS[signupCount];
 
   if (!rawPayouts) {
@@ -1040,8 +1050,27 @@ function computeSwiftScore11(round) {
 
   const grossPlaces = scaleHalf(rawGross);
   const netPlaces = scaleHalf(rawNet);
-  const grossPot = grossPlaces.reduce((a, b) => a + b, 0);
-  const netPot = netPlaces.reduce((a, b) => a + b, 0);
+  let grossPot = grossPlaces.reduce((a, b) => a + b, 0);
+  let netPot = netPlaces.reduce((a, b) => a + b, 0);
+  const basePlacePot = grossPot + netPot;
+
+  // Fold added money into the gross/net place pots (split in the existing
+  // gross:net ratio from the payout table). The side pot (skins/KP) is
+  // untouched — added money goes entirely to the main gross/net purse.
+  let finalGrossPlaces = grossPlaces;
+  let finalNetPlaces = netPlaces;
+  if (addedMoney > 0 && basePlacePot > 0) {
+    const grossShare = addedMoney * (grossPot / basePlacePot);
+    const netShare = addedMoney * (netPot / basePlacePot);
+    const newGrossPot = grossPot + grossShare;
+    const newNetPot = netPot + netShare;
+    const scaledGross = grossPlaces.map(p => p * (newGrossPot / grossPot));
+    const scaledNet = netPlaces.map(p => p * (newNetPot / netPot));
+    finalGrossPlaces = largestRemainderRound(scaledGross, Math.round(newGrossPot));
+    finalNetPlaces = largestRemainderRound(scaledNet, Math.round(newNetPot));
+    grossPot = finalGrossPlaces.reduce((a, b) => a + b, 0);
+    netPot = finalNetPlaces.reduce((a, b) => a + b, 0);
+  }
   const placePot = grossPot + netPot;
   const sidePot = Math.max(0, Math.round((totalPot - placePot) * 100) / 100);
   
@@ -1069,7 +1098,7 @@ function computeSwiftScore11(round) {
 
   const netResults = round.players.map(p => {
     const dq = hasXScore(p);
-    const netScores = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets);
+    const netScores = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets, netHandicapScale(round));
     const net_total = dq ? null : netScores.reduce((a, b) => a + (b === 'X' ? 0 : b), 0);
     return { player_id: p.player_id, name: p.name, net_total, net_scores: netScores, disqualified: dq, achievements: getHoleAchievements(p.scores, round.par) };
   }).sort((a, b) => {
@@ -1082,18 +1111,18 @@ function computeSwiftScore11(round) {
   });
 
   console.log('=== SWIFT_SCORE_11 PAYOUT CALCULATION ===');
-  console.log('Gross Places:', grossPlaces);
-  console.log('Net Places:', netPlaces);
+  console.log('Gross Places:', finalGrossPlaces);
+  console.log('Net Places:', finalNetPlaces);
   console.log('Gross Results (non-DQ):', grossResults.filter(r => !r.disqualified).map(r => ({ name: r.name, gross_total: r.gross_total })));
   console.log('Net Results (non-DQ):', netResults.filter(r => !r.disqualified).map(r => ({ name: r.name, net_total: r.net_total })));
   
-  const rawGrossPayouts = assignPlacePayouts(grossResults.filter(r => !r.disqualified), grossPlaces, "gross_total", {});
-  const rawNetPayouts = assignPlacePayouts(netResults.filter(r => !r.disqualified), netPlaces, "net_total", {});
+  const rawGrossPayouts = assignPlacePayouts(grossResults.filter(r => !r.disqualified), finalGrossPlaces, "gross_total", {});
+  const rawNetPayouts = assignPlacePayouts(netResults.filter(r => !r.disqualified), finalNetPlaces, "net_total", {});
   const { grossPayouts, netPayouts } = applyConflictResolution(
     rawGrossPayouts, rawNetPayouts,
     grossResults.filter(r => !r.disqualified),
     netResults.filter(r => !r.disqualified),
-    grossPlaces, netPlaces
+    finalGrossPlaces, finalNetPlaces
   );
   
   console.log('=== AFTER CONFLICT RESOLUTION ===');
@@ -1103,14 +1132,14 @@ function computeSwiftScore11(round) {
   const carryover = !!round.skins_carryover;
 
   // Separate buy-in pots (independent, like deuces)
-  const ss11GrossSkinsPlayerCount = (round.gross_skins_player_ids?.length > 0 || !Array.isArray(round.gross_skins_player_ids)) ? (round.gross_skins_player_ids?.length || round.player_count) : round.player_count;
-  const ss11NetSkinsPlayerCount = (round.net_skins_player_ids?.length > 0 || !Array.isArray(round.net_skins_player_ids)) ? (round.net_skins_player_ids?.length || round.player_count) : round.player_count;
+  const ss11GrossSkinsPlayerCount = getSkinsPoolCount(round.player_count, round.gross_skins_player_ids);
+  const ss11NetSkinsPlayerCount = getSkinsPoolCount(round.player_count, round.net_skins_player_ids);
   const grossSkinsSeparatePot = (round.gross_skins_enabled && round.gross_skins_separate_buy_in && ss11GrossSkinsPlayerCount > 0)
     ? (round.gross_skins_buy_in || 5) * ss11GrossSkinsPlayerCount : 0;
   const netSkinsSeparatePot = (round.net_skins_enabled && round.net_skins_separate_buy_in && ss11NetSkinsPlayerCount > 0)
     ? (round.net_skins_buy_in || 5) * ss11NetSkinsPlayerCount : 0;
   const kpSeparatePot = (round.kps_enabled && round.kp_separate_buy_in)
-    ? (round.kp_buy_in ?? 5) * ((round.kp_player_ids?.length > 0 || !Array.isArray(round.kp_player_ids)) ? (round.kp_player_ids?.length || round.player_count) : round.player_count) : 0;
+    ? (round.kp_buy_in ?? 5) * getSkinsPoolCount(round.player_count, round.kp_player_ids) : 0;
 
   // Split side pot between gross skins, net skins, or KPs (if no skins enabled)
   const ss11GrossNeedsPot = round.gross_skins_enabled && !round.gross_skins_separate_buy_in;
@@ -1226,10 +1255,12 @@ function computeSwiftScore11(round) {
     net_pot: netPot,
     side_pot: sidePot,
     skins_carryover: carryover,
-    gross_places: grossPlaces,
-    net_places: netPlaces,
-    gross_num_places: grossPlaces.length,
-    net_num_places: netPlaces.length,
+    gross_places: finalGrossPlaces,
+    net_places: finalNetPlaces,
+    gross_num_places: finalGrossPlaces.length,
+    net_num_places: finalNetPlaces.length,
+    added_money: addedMoney,
+    added_money_label: round.added_money_label || '',
     gross_results: grossResults,
     net_results: netResults,
     kp_results: finalKpResults,
@@ -1359,7 +1390,8 @@ export function computeResults(round) {
       break;
     case "OFF": {
       const round = roundForCompute;
-      const totalPot = round.buy_in * round.player_count;
+      const addedMoney = round.added_money || 0;
+      const totalPot = round.buy_in * round.player_count + addedMoney;
       const carryover = !!round.skins_carryover;
       
       const signupCount = (round.all_players || round.players).length;
@@ -1392,14 +1424,14 @@ export function computeResults(round) {
       });
 
       // Separate buy-in pots (independent, like deuces)
-      const grossSkinsPlayerCount = (round.gross_skins_player_ids?.length > 0 || !Array.isArray(round.gross_skins_player_ids)) ? (round.gross_skins_player_ids?.length || signupCount) : signupCount;
-      const netSkinsPlayerCount = (round.net_skins_player_ids?.length > 0 || !Array.isArray(round.net_skins_player_ids)) ? (round.net_skins_player_ids?.length || signupCount) : signupCount;
+      const grossSkinsPlayerCount = getSkinsPoolCount(signupCount, round.gross_skins_player_ids);
+      const netSkinsPlayerCount = getSkinsPoolCount(signupCount, round.net_skins_player_ids);
       const offGrossSkinsSeparatePot = (round.gross_skins_enabled && round.gross_skins_separate_buy_in && grossSkinsPlayerCount > 0)
         ? (round.gross_skins_buy_in || 5) * grossSkinsPlayerCount : 0;
       const offNetSkinsSeparatePot = (round.net_skins_enabled && round.net_skins_separate_buy_in && netSkinsPlayerCount > 0)
         ? (round.net_skins_buy_in || 5) * netSkinsPlayerCount : 0;
       const offKpSeparatePot = (round.kps_enabled && round.kp_separate_buy_in)
-        ? (round.kp_buy_in ?? 5) * ((round.kp_player_ids?.length > 0 || !Array.isArray(round.kp_player_ids)) ? (round.kp_player_ids?.length || signupCount) : signupCount) : 0;
+        ? (round.kp_buy_in ?? 5) * getSkinsPoolCount(signupCount, round.kp_player_ids) : 0;
 
       // Split main pot between gross and net skins if both share from it
       // A skins game with an explicit empty player list should not receive any pot
@@ -1481,6 +1513,8 @@ export function computeResults(round) {
         total_pot: totalPot,
         deuce_pot: deucePot,
         side_pot: offGrossSkinsPot + offNetSkinsPot,
+        added_money: addedMoney,
+        added_money_label: round.added_money_label || '',
         gross_skins_separate_pot: offGrossSkinsSeparatePot,
         net_skins_separate_pot: offNetSkinsSeparatePot,
         gross_skins_allocated_pot: offGrossSkinsPot,
@@ -1541,7 +1575,8 @@ export function computeResults(round) {
 function computeCustom(round) {
   // Use the full signup roster for pot calculation — withdrawn players still paid in.
   const signupCount = (round.all_players || round.players).length;
-  const totalPot = round.buy_in * signupCount;
+  const addedMoney = round.added_money || 0;
+  const totalPot = round.buy_in * signupCount + addedMoney;
   const carryover = !!round.skins_carryover;
   console.log('computeCustom:', { totalPot, carryover, gross_skins: round.gross_skins_enabled, net_skins: round.net_skins_enabled, kps: round.kps_enabled, kp_separate: round.kp_separate_buy_in, hole_indexes_count: round.hole_handicap_indexes?.length, custom_gross_places: round.custom_gross_places, custom_net_places: round.custom_net_places });
   
@@ -1561,7 +1596,7 @@ function computeCustom(round) {
 
   const netResults = round.players.map(p => {
     const dq = hasXScore(p);
-    const netScores = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets);
+    const netScores = getPlayerNetScores(p, round.hole_handicap_indexes, round.course_tee_sets, netHandicapScale(round));
     const net_total = dq ? null : netScores.reduce((a, b) => a + (b === 'X' ? 0 : b), 0);
     return { player_id: p.player_id, name: p.name, net_total, net_scores: netScores, disqualified: dq, achievements: getHoleAchievements(p.scores, round.par) };
   }).sort((a, b) => {
@@ -1574,14 +1609,14 @@ function computeCustom(round) {
   });
 
   // Side games: skins, deuces, KPs (same as OFF mode)
-  const customGrossSkinsPlayerCount = (round.gross_skins_player_ids?.length > 0 || !Array.isArray(round.gross_skins_player_ids)) ? (round.gross_skins_player_ids?.length || signupCount) : signupCount;
-  const customNetSkinsPlayerCount = (round.net_skins_player_ids?.length > 0 || !Array.isArray(round.net_skins_player_ids)) ? (round.net_skins_player_ids?.length || signupCount) : signupCount;
+  const customGrossSkinsPlayerCount = getSkinsPoolCount(signupCount, round.gross_skins_player_ids);
+  const customNetSkinsPlayerCount = getSkinsPoolCount(signupCount, round.net_skins_player_ids);
   const customGrossSkinsSeparatePot = (round.gross_skins_enabled && round.gross_skins_separate_buy_in && customGrossSkinsPlayerCount > 0)
     ? (round.gross_skins_buy_in || 5) * customGrossSkinsPlayerCount : 0;
   const customNetSkinsSeparatePot = (round.net_skins_enabled && round.net_skins_separate_buy_in && customNetSkinsPlayerCount > 0)
     ? (round.net_skins_buy_in || 5) * customNetSkinsPlayerCount : 0;
   const customKpSeparatePot = (round.kps_enabled && round.kp_separate_buy_in)
-    ? (round.kp_buy_in ?? 5) * ((round.kp_player_ids?.length > 0 || !Array.isArray(round.kp_player_ids)) ? (round.kp_player_ids?.length || signupCount) : signupCount) : 0;
+    ? (round.kp_buy_in ?? 5) * getSkinsPoolCount(signupCount, round.kp_player_ids) : 0;
 
   const customGamesPot = totalPot * ((round.custom_games_percent || 0) / 100);
   const customGrossNeedsPot = round.gross_skins_enabled && !round.gross_skins_separate_buy_in;
@@ -1734,6 +1769,8 @@ function computeCustom(round) {
     gross_places: grossPlaceAmounts,
     net_places: netPlaceAmounts,
     side_pot: customGamesPot,
+    added_money: addedMoney,
+    added_money_label: round.added_money_label || '',
     gross_skins_separate_pot: customGrossSkinsSeparatePot,
     net_skins_separate_pot: customNetSkinsSeparatePot,
     gross_skins_allocated_pot: customGrossSkinsPot,

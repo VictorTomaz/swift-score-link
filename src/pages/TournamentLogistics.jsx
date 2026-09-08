@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CalendarClock, Shuffle, Check, Clock, Users, Save, UserPlus, Printer, Mail, FileText, ArrowLeft, Loader2 } from "lucide-react";
+import { CalendarClock, Shuffle, Check, Clock, Users, Save, UserPlus, Printer, Mail, FileText, ArrowLeft, Loader2, ArrowUpToLine, Layers } from "lucide-react";
 import { DragDropContext } from "@hello-pangea/dnd";
 import { format } from "date-fns";
 import { motion } from "framer-motion";
@@ -22,6 +22,9 @@ import BlankScorecardPrintButton from "@/components/scorecard/BlankScorecardPrin
 import TeamGroups from "@/components/logistics/DraggableTeamGroups";
 import DraggableTeeSheet from "@/components/logistics/DraggableTeeSheet";
 import { Switch } from "@/components/ui/switch";
+import VegasAllowanceInput from "@/components/setup-wizard/VegasAllowanceInput";
+import CombinedTeeSheet from "@/components/logistics/CombinedTeeSheet";
+import LogisticsRoundSelector from "@/components/logistics/LogisticsRoundSelector";
 
 const DEFAULT_CONFIG = { start_time: "08:00", interval_minutes: 8, group_size: 4, extra_slots: 0 };
 
@@ -47,6 +50,7 @@ export default function TournamentLogistics() {
   const [showEmailSelector, setShowEmailSelector] = useState(false);
   const [showTeeTimes, setShowTeeTimes] = useState(false);
   const [showScorecards, setShowScorecards] = useState(false);
+  const [showCombined, setShowCombined] = useState(false);
 
   // Local config + assignments (mirrors round data)
   const [config, setConfig] = useState(DEFAULT_CONFIG);
@@ -67,7 +71,7 @@ export default function TournamentLogistics() {
   // the legacy team_mode flag, which the setup wizard doesn't set for team
   // game types. Without this, team rounds fall through to the individual
   // "Generate" button (no auto-save), so handicap-balanced teams never persist.
-  const isTeamFormat = selectedRound?.team_mode || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate'].includes(selectedRound?.game_type);
+  const isTeamFormat = selectedRound?.team_mode || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate', 'team_las_vegas'].includes(selectedRound?.game_type);
 
   // Players with pending (unsaved) group tags + tee times merged in, so the
   // scorecard preview reflects handicap-balanced team assignments immediately
@@ -81,9 +85,24 @@ export default function TournamentLogistics() {
     [players, groupTags, assignments]
   );
 
+  // Multi-day (non-multi-flight) series: compute each round's day number from
+  // its date position within its series. flight_number is 1 for every day in a
+  // single-flight multi-day series, so it can't be used as the day label.
+  const dayNumberByRoundId = useMemo(() => {
+    const map = {};
+    rounds.forEach(r => {
+      if (!r.is_multi_day || r.is_multi_flight) return;
+      const parentId = r.parent_round_id || r.id;
+      const series = rounds.filter(rr => rr.id === parentId || rr.parent_round_id === parentId);
+      series.sort((a, b) => new Date((a.date || '').replace(/-/g, '/')) - new Date((b.date || '').replace(/-/g, '/')));
+      series.forEach((rr, i) => { map[rr.id] = i + 1; });
+    });
+    return map;
+  }, [rounds]);
+
   const scorecardGroups = useMemo(() => {
     if (!selectedRound) return [];
-    const isTeamMode = selectedRound.team_mode === true || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate'].includes(selectedRound.game_type);
+    const isTeamMode = selectedRound.team_mode === true || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate', 'team_las_vegas'].includes(selectedRound.game_type);
     if (isTeamMode) {
       const teamSize = selectedRound?.team_size || 2;
       // 6-6-6: scorecard is per team (by tee_group tag), independent of tee time
@@ -178,6 +197,7 @@ export default function TournamentLogistics() {
   }, [scorecardGroups, selectedRound?.team_mode]);
 
   const handleSelectRound = async (round) => {
+    setShowCombined(false);
     setSelectedRound(round);
     setGeneratedTeeSheetPdfUrl(null);
     setScorecardPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
@@ -206,11 +226,26 @@ export default function TournamentLogistics() {
     setShowTeeTimes(hasSavedTeeTimes);
   };
 
+  // Deep link support: /TournamentLogistics?id=<roundId> auto-selects that round
+  // (used by the Help Assistant's precision navigation buttons).
+  const deepLinkHandledRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkHandledRef.current || !rounds.length) return;
+    const id = new URLSearchParams(window.location.search).get("id");
+    if (!id) return;
+    const match = rounds.find((r) => r.id === id);
+    deepLinkHandledRef.current = true;
+    if (match) {
+      handleSelectRound(match);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [rounds]);
+
   const timeSlots = useMemo(() => {
     if (!players.length) return [];
     const interval = config.interval_minutes || 8;
     const groupSize = config.group_size || 4;
-    if (selectedRound?.team_mode || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate'].includes(selectedRound?.game_type)) {
+    if (selectedRound?.team_mode || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate', 'team_las_vegas'].includes(selectedRound?.game_type)) {
       // Team format: size the tee sheet by team count so no team is ever split
       // across tee times (teams may go as a twosome rather than be broken up).
       const teamSize = selectedRound?.team_size || 2;
@@ -337,33 +372,89 @@ export default function TournamentLogistics() {
     const { draggableId, destination, source, type } = result;
     if (!destination) return;
     if (type === "tee") {
+      const playerId = draggableId.replace("tee-player-", "");
       const newTime = destination.droppableId === "tee-unassigned" ? null : destination.droppableId;
-      updateAssignment(draggableId, newTime);
+      updateAssignment(playerId, newTime);
       setHasChanges(true);
     } else if (type === "team") {
+      const playerId = draggableId.replace("team-player-", "");
       const dest = destination.droppableId;
       if (dest === "team-unassigned") {
         setGroupTags((prev) => {
           const next = { ...prev };
-          delete next[draggableId];
+          delete next[playerId];
           return next;
         });
       } else {
-        setGroupTags((prev) => ({ ...prev, [draggableId]: dest }));
+        setGroupTags((prev) => ({ ...prev, [playerId]: dest }));
       }
       setHasChanges(true);
     } else if (type === "tee-group") {
-      // Dragging a whole team badge — move all players with that tag
-      // to the destination tee time (or unassign if dropped on unassigned).
-      const tag = draggableId.split("_")[1];
+      // Dragging a whole team badge or a whole-slot handle — move all
+      // matching players to the destination tee time (or unassign).
+      // Tag "*" means move EVERY player at the source tee time.
+      const parts = draggableId.split("_");
+      const tag = parts[parts.length - 1];
+      const sourceTime = parts.slice(0, -1).join("_").replace("tee-group-", "");
       if (!tag) return;
       const destId = destination.droppableId;
       const newTime = destId === "tee-group-unassigned" ? null : destId.replace("tee-group-", "");
+      // Don't move a whole slot onto itself — no-op
+      if (tag === "*" && sourceTime === newTime) return;
       const newAssignments = { ...assignments };
+
+      // Whole-slot drop onto an occupied slot: insert/push-down instead of
+      // merging. Groups between the target and source shift by one slot to
+      // make room, so the moved group takes the target slot and everyone
+      // below cascades down (or up, if moving to a later time).
+      if (tag === "*" && newTime !== null) {
+        const sourceIdx = timeSlots.indexOf(sourceTime);
+        const targetIdx = timeSlots.indexOf(newTime);
+        if (sourceIdx >= 0 && targetIdx >= 0 && sourceIdx !== targetIdx) {
+          const sourcePlayers = players.filter((p) => assignments[p.player_id] === sourceTime);
+          if (sourceIdx > targetIdx) {
+            // Moving up: slots [targetIdx .. sourceIdx-1] shift down by 1
+            for (let i = sourceIdx - 1; i >= targetIdx; i--) {
+              const fromTime = timeSlots[i];
+              const toTime = timeSlots[i + 1];
+              players.forEach((p) => {
+                if (assignments[p.player_id] === fromTime) {
+                  newAssignments[p.player_id] = toTime;
+                }
+              });
+            }
+          } else {
+            // Moving down: slots [sourceIdx+1 .. targetIdx] shift up by 1
+            for (let i = sourceIdx + 1; i <= targetIdx; i++) {
+              const fromTime = timeSlots[i];
+              const toTime = timeSlots[i - 1];
+              players.forEach((p) => {
+                if (assignments[p.player_id] === fromTime) {
+                  newAssignments[p.player_id] = toTime;
+                }
+              });
+            }
+          }
+          sourcePlayers.forEach((p) => { newAssignments[p.player_id] = newTime; });
+          setAssignments(newAssignments);
+          setSelectedPlayerId(null);
+          setHasChanges(true);
+          return;
+        }
+      }
+
+      // Default: move matching players to the new time (merge for team badges,
+      // simple move for whole-slot drops onto empty/unassigned).
       players.forEach((p) => {
-        const pTag = (groupTags[p.player_id] || p.tee_group || "").trim();
-        if (pTag === tag) {
-          newAssignments[p.player_id] = newTime;
+        if (tag === "*") {
+          if (assignments[p.player_id] === sourceTime) {
+            newAssignments[p.player_id] = newTime;
+          }
+        } else {
+          const pTag = (groupTags[p.player_id] || p.tee_group || "").trim();
+          if (pTag === tag) {
+            newAssignments[p.player_id] = newTime;
+          }
         }
       });
       setAssignments(newAssignments);
@@ -386,23 +477,80 @@ export default function TournamentLogistics() {
     updateAssignment(selectedPlayerId, null);
   };
 
+  // Shift all assigned groups up to fill empty slots, preserving relative
+  // order. e.g. slots [08:00 empty, 08:08 full, 08:16 empty, 08:24 full]
+  // → [08:08 full, 08:16 full, 08:24 empty, ...] (gaps removed).
+  const handleCompactTeeTimes = () => {
+    const filledSlots = slotsWithPlayers.filter((s) => s.players.length > 0);
+    if (filledSlots.length === 0) return;
+    const newAssignments = {};
+    // Keep unassigned players unassigned
+    players.forEach((p) => {
+      if (assignments[p.player_id] == null) newAssignments[p.player_id] = null;
+    });
+    // Reassign each filled slot's players to consecutive slots from the top
+    filledSlots.forEach((slot, i) => {
+      const targetTime = timeSlots[i];
+      slot.players.forEach((p) => {
+        newAssignments[p.player_id] = targetTime;
+      });
+    });
+    // Preserve any remaining players' assignments (edge case)
+    players.forEach((p) => {
+      if (newAssignments[p.player_id] === undefined) {
+        newAssignments[p.player_id] = assignments[p.player_id];
+      }
+    });
+    setAssignments(newAssignments);
+    setHasChanges(true);
+    toast.success(`Compacted ${filledSlots.length} group${filledSlots.length === 1 ? "" : "s"} up`);
+  };
+
+  // Find the round whose results should seed THIS round's tee times.
+  // Multi-flight tournaments have different players per flight, so seeding a
+  // flight by the parent (Flight 1) round's scores is meaningless — those are
+  // different people. Seed by the most recent prior round in the SAME flight
+  // instead. Single-flight multi-day series seed by the parent (Day 1) round.
+  const findSeedSourceRound = useCallback(async (round) => {
+    if (round?.is_multi_flight) {
+      const sameFlightPrior = rounds
+        .filter(r =>
+          r.id !== round.id &&
+          (r.flight_number || 1) === (round.flight_number || 1) &&
+          r.date && round.date &&
+          new Date(r.date.replace(/-/g, '/')) < new Date(round.date.replace(/-/g, '/'))
+        )
+        .sort((a, b) => new Date(b.date.replace(/-/g, '/')) - new Date(a.date.replace(/-/g, '/')));
+      if (sameFlightPrior.length > 0) return sameFlightPrior[0];
+      return null;
+    }
+    if (round?.parent_round_id) {
+      try {
+        return await base44.entities.Round.get(round.parent_round_id);
+      } catch (err) {
+        return null;
+      }
+    }
+    return null;
+  }, [rounds]);
+
   const handleSeedIndividualByScore = async () => {
     if (!selectedRound?.parent_round_id) {
       toast.error("Seed by Score needs a multi-day series — link this round to a Day 1 parent first.");
       return;
     }
-    let parentRound;
-    try {
-      parentRound = await base44.entities.Round.get(selectedRound.parent_round_id);
-    } catch (err) {
-      toast.error("Could not load the parent round results.");
+    const seedSource = await findSeedSourceRound(selectedRound);
+    if (!seedSource) {
+      toast.error(selectedRound?.is_multi_flight
+        ? "No prior day scored in this flight — score the earlier day first."
+        : "Could not load the parent round results.");
       return;
     }
-    const pr = parentRound?.results;
+    const pr = seedSource?.results;
     const seedType = seedScoreType === "gross" ? "gross" : "net";
     const indivResults = (seedType === "gross" ? pr?.gross_results : pr?.net_results) || [];
     if (!indivResults.length) {
-      toast.error(`No ${seedType} scores found in the parent round — score Day 1 first.`);
+      toast.error(`No ${seedType} scores found in the seed round — score the earlier day first.`);
       return;
     }
     const scoreOf = (r) => (seedType === "gross" ? r.gross_total : r.net_total) ?? 9999;
@@ -444,7 +592,7 @@ export default function TournamentLogistics() {
       handleSeedIndividualByScore();
       return;
     }
-    const isTeamFormat = selectedRound?.team_mode || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate'].includes(selectedRound?.game_type);
+    const isTeamFormat = selectedRound?.team_mode || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate', 'team_las_vegas'].includes(selectedRound?.game_type);
     const algo = algorithm;
     const taggedPlayers = players.map((p) => ({
       ...p,
@@ -862,6 +1010,20 @@ export default function TournamentLogistics() {
     );
   };
 
+  // Las Vegas handicap allowance — any percentage the host wants (null = follow
+  // the round's handicap formula).
+  const handleVegasAllowanceChange = async (pct) => {
+    if (!selectedRound) return;
+    const updates = { vegas_hcp_percent: pct };
+    await base44.entities.Round.update(selectedRound.id, updates);
+    setSelectedRound((prev) => prev ? { ...prev, ...updates } : prev);
+    queryClient.setQueryData(["rounds", user?.email], (old = []) =>
+      old.map((r) => r.id === selectedRound.id ? { ...r, ...updates } : r)
+    );
+    queryClient.setQueryData(["round", selectedRound.id], (old) => old ? { ...old, ...updates } : old);
+    toast.success(pct == null ? "Allowance follows the handicap formula" : `Handicap allowance set to ${pct}%`);
+  };
+
   const handleAutoAssignPairs = async () => {
     if (!selectedRound || !players.length) return;
     const teamSize = selectedRound.team_size || 2;
@@ -898,18 +1060,18 @@ export default function TournamentLogistics() {
     // the leaders out last. Existing tee_group tags are preserved — only tee
     // times are assigned. Requires a multi-day child round with a scored parent.
     if (teamPairStyle === "seed_by_score") {
-      let parentRound;
-      try {
-        parentRound = await base44.entities.Round.get(selectedRound.parent_round_id);
-      } catch (err) {
-        toast.error("Could not load the parent round results.");
+      const seedSource = await findSeedSourceRound(selectedRound);
+      if (!seedSource) {
+        toast.error(selectedRound?.is_multi_flight
+          ? "No prior day scored in this flight — score the earlier day first."
+          : "Could not load the parent round results.");
         return;
       }
-      const pr = parentRound?.results;
+      const pr = seedSource?.results;
       const seedType = seedScoreType === "gross" ? "gross" : "net";
       const teamResults = (seedType === "gross" ? pr?.team_gross_results : pr?.team_net_results) || [];
       if (!teamResults.length) {
-        toast.error(`No ${seedType} team scores found in the parent round — score Day 1 first.`);
+        toast.error(`No ${seedType} team scores found in the seed round — score the earlier day first.`);
         return;
       }
       const tagOf = (p) => (groupTags[p.player_id] || p.tee_group || "").trim();
@@ -1173,51 +1335,27 @@ export default function TournamentLogistics() {
         >
           Back to Locking in Roster and Entering Scores
         </Button>
+        {selectedRound && (selectedRound.is_multi_day || selectedRound.is_multi_flight) && (() => {
+          const anchorId = selectedRound.parent_round_id || selectedRound.id;
+          return (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => navigate(`/TournamentHub?id=${anchorId}`)}
+              className="gap-1.5 ml-auto"
+            >
+              <Layers className="w-4 h-4" />
+              Tournament Hub
+            </Button>
+          );
+        })()}
       </div>
       <PageDescription
         title="Tournament Logistics"
         description="Assign tee times and group tags, then generate scorecards or tee sheets."
       />
 
-      {/* Round selector */}
-      <Card className="border-0 shadow-sm">
-        <CardContent className="p-4 space-y-3">
-          <h2 className="text-sm font-semibold text-foreground">Select a Round</h2>
-          {isLoading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-12 w-full rounded-lg" />
-              ))}
-            </div>
-          ) : rounds.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">No rounds found. Create a round first.</p>
-          ) : (
-            <div className="space-y-2 max-h-72 overflow-y-auto">
-              {rounds.map((round) => (
-                <button
-                  key={round.id}
-                  onClick={() => handleSelectRound(round)}
-                  className={`w-full flex items-center justify-between p-3 rounded-lg border transition-colors text-left ${
-                    selectedRound?.id === round.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border bg-muted/50 hover:bg-muted"
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm text-foreground truncate">{round.event_name}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {round.course_name || "No course"} · {round.player_count} players
-                    </p>
-                  </div>
-                  <div className="text-xs text-muted-foreground shrink-0 ml-2">
-                    {round.date ? format(new Date(round.date.replace(/-/g, "/")), "MMM d, yyyy") : ""}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <LogisticsRoundSelector rounds={rounds} isLoading={isLoading} selectedRound={selectedRound} onSelect={handleSelectRound} dayNumberByRoundId={dayNumberByRoundId} />
 
       {selectedRound && (
         <>
@@ -1242,6 +1380,24 @@ export default function TournamentLogistics() {
               {showScorecards ? "Hide Scorecards" : "Add Scorecards"}
             </Button>
           </div>
+
+          {selectedRound.is_multi_flight && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 p-2" aria-label="Tee sheet view">
+              <Button size="sm" variant={!showCombined ? 'default' : 'ghost'} aria-pressed={!showCombined} onClick={() => setShowCombined(false)}>Per-flight</Button>
+              <Button size="sm" variant={showCombined ? 'default' : 'ghost'} aria-pressed={showCombined} onClick={() => { setShowCombined(true); setShowTeeTimes(true); }} className="gap-1.5"><Layers className="h-4 w-4" />Combined</Button>
+            </div>
+          )}
+
+          {showTeeTimes && showCombined && selectedRound.is_multi_flight && (
+            <CombinedTeeSheet
+              key={selectedRound.id}
+              round={selectedRound}
+              players={players.map(p => ({ ...p, tee_time: assignments[p.player_id] || null, tee_group: groupTags[p.player_id] || null }))}
+              email={user?.email}
+              hasChanges={hasChanges}
+              beforeExport={async () => { if (hasChanges) await persistAssignments(groupTags, assignments); }}
+            />
+          )}
 
           {/* Team Setup + Scorecard config */}
           <Card className="border-0 shadow-sm">
@@ -1280,7 +1436,7 @@ export default function TournamentLogistics() {
                   </div>
                 </div>
               )}
-              {selectedRound?.team_mode && (() => {
+              {selectedRound?.team_mode && selectedRound?.game_type !== 'team_las_vegas' && (() => {
                 const scrambleOnly = ['team_chapman', 'team_6_6_6'].includes(selectedRound?.game_type);
                 return (
                   <div className="flex items-center gap-2 py-1">
@@ -1347,6 +1503,15 @@ export default function TournamentLogistics() {
                   </select>
                 </div>
               )}
+              {(selectedRound?.game_type === 'team_las_vegas' || selectedRound?.team_format === 'las_vegas') && (
+                <div className="py-1">
+                  <VegasAllowanceInput
+                    round={selectedRound}
+                    value={selectedRound?.vegas_hcp_percent}
+                    onChange={handleVegasAllowanceChange}
+                  />
+                </div>
+              )}
               {selectedRound?.team_mode && (
                 <p className="text-xs text-muted-foreground">
                   Tip: Assign different group tags (e.g. A, B) to players on the same tee time — each tag becomes a separate team on the scorecard.
@@ -1369,11 +1534,13 @@ export default function TournamentLogistics() {
                 <div className="pt-2 border-t border-border space-y-1">
                   <p className="text-xs text-muted-foreground">
                     Scorecard layout: <span className="font-medium text-foreground">
-                      {selectedRound?.game_type === 'team_6_6_6' ? '6-6-6' : selectedRound?.game_type === 'team_chapman' ? 'Chapman' : selectedRound?.game_type === 'team_aggregate' ? 'Aggregate' : (selectedRound?.team_format || 'best_ball') === 'best_ball' ? 'Best Ball' : 'Scramble'}
+                      {selectedRound?.game_type === 'team_6_6_6' ? '6-6-6' : selectedRound?.game_type === 'team_chapman' ? 'Chapman' : selectedRound?.game_type === 'team_las_vegas' || selectedRound?.team_format === 'las_vegas' ? 'Las Vegas' : selectedRound?.game_type === 'team_aggregate' ? 'Aggregate' : (selectedRound?.team_format || 'best_ball') === 'best_ball' ? 'Best Ball' : 'Scramble'}
                     </span> · {selectedRound?.team_size || 2}-man teams
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Each team gets its own {selectedRound?.game_type === 'team_6_6_6' ? '6-6-6 segment' : 'Gross/Net best-ball'} row on the scorecard.
+                    {selectedRound?.game_type === 'team_las_vegas' || selectedRound?.team_format === 'las_vegas'
+                      ? 'Each player writes their own gross score per hole (dots show their strokes) — the Gross/Net rows show the 1-gross + 2-net Vegas total.'
+                      : `Each team gets its own ${selectedRound?.game_type === 'team_6_6_6' ? '6-6-6 segment' : 'Gross/Net best-ball'} row on the scorecard.`}
                   </p>
                 </div>
               )}
@@ -1552,7 +1719,7 @@ export default function TournamentLogistics() {
           </Card>
 
           <DragDropContext onDragEnd={handleDragEnd}>
-          {showTeeTimes && (
+          {showTeeTimes && !showCombined && (
           <>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -1582,7 +1749,18 @@ export default function TournamentLogistics() {
                 title="Open email app with player BCCs"
               >
                 <Mail className="w-3.5 h-3.5" />
-                To Me
+                Email Players
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleCompactTeeTimes}
+                disabled={!slotsWithPlayers.some((s) => s.players.length > 0)}
+                className="gap-1.5 bg-logistics text-logistics-foreground hover:bg-logistics/90"
+                title="Shift all groups up to fill empty slots"
+              >
+                <ArrowUpToLine className="w-3.5 h-3.5" />
+                Compact
               </Button>
             </div>
           </div>

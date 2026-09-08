@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { motion } from 'framer-motion';
 import { Trash2, LogOut, Settings as SettingsIcon, HelpCircle, Printer, Crown, CalendarClock } from 'lucide-react';
@@ -15,6 +16,13 @@ export default function Settings() {
   const { logout } = useAuth();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [helpButtonVisible, setHelpButtonVisible] = useState(() => localStorage.getItem('ss_help_button_hidden') !== 'true');
+
+  const toggleHelpButton = (checked) => {
+    localStorage.setItem('ss_help_button_hidden', checked ? 'false' : 'true');
+    setHelpButtonVisible(checked);
+    window.dispatchEvent(new CustomEvent('ss-help-button-visibility'));
+  };
 
   const handleDeleteAccount = async () => {
     setDeleting(true);
@@ -81,7 +89,7 @@ export default function Settings() {
             <Link to="/TournamentLogistics" className="flex items-center justify-between p-3 bg-muted/50 rounded-lg hover:bg-muted transition-colors">
               <div>
                 <p className="font-medium text-foreground text-sm">Tournament Logistics</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Organize groupings, tee times & print scorecards.</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Organize groupings, tee times, scorecards & tee sheets.</p>
               </div>
               <CalendarClock className="w-4 h-4 text-muted-foreground" />
             </Link>
@@ -92,6 +100,21 @@ export default function Settings() {
               </div>
               <HelpCircle className="w-4 h-4 text-muted-foreground" />
             </Link>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">Preferences</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground text-sm">Show Help Button</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Floating Helper button for how-to questions. Drag it anywhere on screen to reposition.</p>
+              </div>
+              <Switch checked={helpButtonVisible} onCheckedChange={toggleHelpButton} />
+            </div>
           </CardContent>
         </Card>
 

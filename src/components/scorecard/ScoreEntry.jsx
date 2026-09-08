@@ -53,6 +53,16 @@ export default function ScoreEntry({ round, onUpdate, onScoresChange, switchMode
    const isTeamScore = isSingleTeamScoreFormat(round);
 
   const [selectedPlayerId, setSelectedPlayerIdLocal] = useState(externalSelectedPlayerId || "");
+
+  // Sync external player selection (from ScorecardGroupFlow lock) into local state.
+  // Without this, selecting a team and pressing "Start Scorecard" updates the
+  // parent but ScoreEntry's local selectedPlayerId stays "" — blocking dictation.
+  useEffect(() => {
+    if (externalSelectedPlayerId && externalSelectedPlayerId !== selectedPlayerId) {
+      setSelectedPlayerIdLocal(externalSelectedPlayerId);
+    }
+  }, [externalSelectedPlayerId]);
+
   const setSelectedPlayerId = (id) => {
     setSelectedPlayerIdLocal(id);
     onPlayerSelect?.(id);

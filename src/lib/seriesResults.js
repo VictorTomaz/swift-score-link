@@ -7,6 +7,7 @@
  */
 import { assignPlacePayouts, applyConflictResolution, buildFinalPayouts } from "@/lib/swiftScoreEngine";
 import { applyTeamConflictResolution } from "@/lib/teamScoreEngine";
+import { computeVegasSeriesResults } from "@/lib/vegasSeriesResults";
 
 /**
  * Returns true if `round` is the latest-dated round in its multi-day series.
@@ -140,6 +141,11 @@ export function computeSeriesResults(finalRound, finalResults, siblingResults, p
  * the roster + team tags from Day 1 keeps teams consistent throughout the series.
  */
 export function computeTeamSeriesResults(finalRound, finalResults, siblingResults, parentRound) {
+  // Las Vegas (1 gross / 2 net) aggregates one combined total per team.
+  if ((finalResults.team_vegas_results || []).length > 0) {
+    return computeVegasSeriesResults(finalRound, finalResults, siblingResults, parentRound);
+  }
+
   const teamMap = {};
   const collectTeam = (results) => {
     (results.team_gross_results || []).forEach(t => {

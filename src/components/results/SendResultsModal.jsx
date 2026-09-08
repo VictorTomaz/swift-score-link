@@ -11,14 +11,14 @@ import { shareOrDownloadPdf } from "@/lib/fileShare";
 
 const STEPS = { SELECT: "select", PREVIEW: "preview" };
 
-export default function SendResultsModal({ isOpen, onClose, round, results, dayLabel }) {
+export default function SendResultsModal({ isOpen, onClose, round, results, dayLabel, flightData }) {
   const [step, setStep] = useState(STEPS.SELECT);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
 
   const messageText = useMemo(() => {
-    return formatResultsText(round, results, dayLabel);
-  }, [round, results, dayLabel]);
+    return formatResultsText(round, results, dayLabel, flightData);
+  }, [round, results, dayLabel, flightData]);
 
   // Load player contact info from the master player list
   const { data: masterPlayers = [] } = useQuery({
@@ -119,14 +119,15 @@ export default function SendResultsModal({ isOpen, onClose, round, results, dayL
 
   const handleEmail = async (sendToMe = false) => {
     const subject = `${round?.event_name || "Golf"} Results`;
-    const htmlBody = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.6;color:#1a1a1a;">${messageText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</div>`;
+    const htmlBody = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#1a1a1a;white-space:pre-wrap;">${messageText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`;
     setEmailSending(true);
     try {
       if (sendToMe) {
         // Open email client with BCC pre-filled for manual sending
         const bccList = selectedEmails.join(',');
-        // Convert newlines to CRLF and encode properly for mailto
-        const bodyWithBreaks = messageText.replace(/\n/g, '\r\n');
+        // Mail clients need CRLF line breaks in a mailto body — plain \n gets
+        // collapsed, running the whole message together as one block.
+        const bodyWithBreaks = messageText.replace(/\r?\n/g, '\r\n');
         const mailtoUrl = `mailto:?bcc=${encodeURIComponent(bccList)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyWithBreaks)}`;
         window.open(mailtoUrl, '_blank');
         toast.success("Opening your email app — press send to deliver");
@@ -309,7 +310,7 @@ export default function SendResultsModal({ isOpen, onClose, round, results, dayL
                   disabled={emailSending}
                 >
                   <Mail className="w-4 h-4" />
-                  {emailSending ? "Sending..." : "Send to My Outbox"}
+                  Send to My Outbox
                 </Button>
               </div>
             )}

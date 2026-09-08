@@ -134,7 +134,7 @@ export default function ScoreSummary({ round, liveScores, onScoresChange, onEdit
         </div>
       )}
       <CardContent className="p-0">
-        <div className="overflow-x-auto overflow-y-auto max-h-[70vh]" style={{ WebkitOverflowScrolling: 'touch', maxWidth: '100%' }}>
+        <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch', maxWidth: '100%' }}>
           <table className="w-full text-xs border-collapse" style={{ minWidth: 'max-content' }}>
             <thead className="sticky top-0 z-10">
               <tr className="bg-muted">

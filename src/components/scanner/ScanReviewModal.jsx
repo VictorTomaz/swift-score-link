@@ -34,11 +34,14 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
           return String(s);
         });
         
-        // Return with explicit player_id field (snake_case for DB compatibility)
+        // Return with explicit player_id field (snake_case for DB compatibility).
+        // Carry teamMemberIds through for team-format rows so save can fan the
+        // team's score out to every member.
         return { 
           player_id: playerId,
           player_name: scanned.playerName || roundPlayer?.name,
-          scores 
+          scores,
+          teamMemberIds: scanned.teamMemberIds,
         };
       });
       console.log('ScanReviewModal playerScores:', merged);

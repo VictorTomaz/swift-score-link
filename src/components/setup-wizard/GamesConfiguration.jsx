@@ -5,15 +5,17 @@ import { Label } from '@/components/ui/label';
 import { Users, User } from 'lucide-react';
 import InfoTooltip from '@/components/InfoTooltip';
 import Segments666Config, { defaultSegments666 } from '@/components/setup-wizard/Segments666Config';
+import VegasAllowanceInput from '@/components/setup-wizard/VegasAllowanceInput';
 
 const FORMATS = [
-  { value: 'stroke_play', label: 'Stroke Play', desc: 'Standard individual scores', type: 'individual' },
-  { value: 'best_ball', label: 'Best Ball', desc: 'Best score per hole', type: 'team' },
-  { value: 'scramble', label: 'Scramble', desc: 'One team score per hole', type: 'team' },
-  { value: 'chapman', label: 'Chapman', desc: 'Team bookend format', type: 'team' },
-  { value: '6_6_6', label: '6-6-6', desc: 'Multiple formats', type: 'team' },
-  { value: 'aggregate', label: 'Aggregate', desc: 'Sum of all team scores', type: 'team' },
-  { value: 'stableford', label: 'Stableford', desc: 'Points-based scoring', type: 'individual' },
+  { value: 'stroke_play', label: 'Stroke Play', desc: 'Standard individual scores', type: 'individual', rec: 'Rec: 95% individual' },
+  { value: 'best_ball', label: 'Best Ball', desc: 'Best score per hole', type: 'team', rec: 'Rec: 85% four-ball' },
+  { value: 'scramble', label: 'Scramble', desc: 'One team score per hole', type: 'team', rec: 'Rec: 25%/15% (4-player USGA)' },
+  { value: 'chapman', label: 'Chapman', desc: 'Team bookend format', type: 'team', rec: 'Rec: 60% low / 40% high' },
+  { value: '6_6_6', label: '6-6-6', desc: 'Multiple formats', type: 'team', rec: 'Rec: per-segment format allowance' },
+  { value: 'aggregate', label: 'Aggregate', desc: 'Sum of all team scores', type: 'team', rec: 'Rec: 100% combined' },
+  { value: 'las_vegas', label: 'Las Vegas', desc: '1 gross + 2 net per hole', type: 'team', rec: 'Rec: 85% individual allowance' },
+  { value: 'stableford', label: 'Stableford', desc: 'Points-based scoring', type: 'individual', rec: 'Rec: 95% individual' },
 ];
 
 const HCP_FORMULAS = [
@@ -41,13 +43,16 @@ function syncLegacy(games) {
       : main.format === 'chapman' ? 'team_chapman'
       : main.format === '6_6_6' ? 'team_6_6_6'
       : main.format === 'aggregate' ? 'team_aggregate'
+      : main.format === 'las_vegas' ? 'team_las_vegas'
       : 'team_best_ball')
     : 'individual';
+  const isVegas = main.format === 'las_vegas';
   return {
     game_type: legacyType,
     team_mode: isTeam,
-    team_format: ['scramble', 'aggregate'].includes(main.format) ? main.format : 'best_ball',
-    team_size: main.team_size || 2,
+    team_format: ['scramble', 'aggregate', 'las_vegas'].includes(main.format) ? main.format : 'best_ball',
+    // Las Vegas counts three balls per hole, so it needs 3- or 4-player teams.
+    team_size: isVegas ? Math.max(main.team_size || 4, 3) : (main.team_size || 2),
     hcp_formula: main.hcp_formula || (isTeam ? 'avg_30' : 'combined_85'),
   };
 }
@@ -64,6 +69,8 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
       ? (form.game_type === 'team_scramble' ? 'scramble'
         : form.game_type === 'team_chapman' ? 'chapman'
         : form.game_type === 'team_6_6_6' ? '6_6_6'
+        : form.game_type === 'team_aggregate' ? 'aggregate'
+        : form.game_type === 'team_las_vegas' ? 'las_vegas'
         : 'best_ball')
       : 'stroke_play';
     return [{
@@ -112,9 +119,12 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
   // Scramble, Chapman, and 6-6-6 use a single team score per hole, so skins can't be
   // individual in these formats — force team skins on and lock the toggle.
   const noIndividualSkins = ['scramble', 'chapman', '6_6_6'].includes(mainGame?.format);
-  // Aggregate: team skins (lowest team SUM per hole) isn't a valid game, so
-  // skins must stay individual — lock the toggle to Off.
-  const aggregateForcesIndividualSkins = mainGame?.format === 'aggregate';
+  // Las Vegas counts 1 gross + 2 net every hole, so teams must have 3 or 4 players.
+  const isVegas = mainGame?.format === 'las_vegas';
+  const teamSizeOptions = isVegas ? [3, 4] : [2, 3, 4];
+  // Aggregate and Las Vegas: side games stay individual — each player competes
+  // on their own even though the main event is a team game.
+  const aggregateForcesIndividualSkins = mainGame?.format === 'aggregate' || isVegas;
 
   return (
   <div className="p-6 space-y-6">
@@ -144,18 +154,6 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
       </div>
       {mainGame && (
         <div className="space-y-3 p-4 rounded-lg border-2 border-primary/30 bg-primary/5">
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Name</label>
-            <input
-              type="text"
-              value={mainGame.name}
-              onChange={e => updateGame(mainGame.id, { name: e.target.value })}
-              disabled={isChild}
-              className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
-              placeholder="Main Event"
-            />
-          </div>
-
           {/* Type toggle */}
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground">Scoring Type</label>
@@ -176,7 +174,7 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                 disabled={isChild}
                 onClick={() => !isChild && updateGame(mainGame.id, {
                   type: 'team',
-                  format: ['best_ball', 'scramble', 'chapman', '6_6_6', 'aggregate'].includes(mainGame.format) ? mainGame.format : 'best_ball',
+                  format: ['best_ball', 'scramble', 'chapman', '6_6_6', 'aggregate', 'las_vegas'].includes(mainGame.format) ? mainGame.format : 'best_ball',
                   // Default team handicap formula to 70% of Combined Average when switching to team play
                   ...(mainGame.type !== 'team' ? { hcp_formula: 'avg_30' } : {})
                 })}
@@ -198,11 +196,15 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                   disabled={isChild}
                   onClick={() => {
                     if (isChild) return;
-                    updateGame(mainGame.id, { format: f.value });
+                    updateGame(mainGame.id, {
+                      format: f.value,
+                      // Las Vegas needs 3 or 4 players per team
+                      ...(f.value === 'las_vegas' ? { team_size: Math.max(mainGame.team_size || 4, 3) } : {}),
+                    });
                     if (['scramble', 'chapman', '6_6_6'].includes(f.value)) {
                       updateForm({ skins_team_mode: true });
                     }
-                    if (f.value === 'aggregate') {
+                    if (f.value === 'aggregate' || f.value === 'las_vegas') {
                       updateForm({ skins_team_mode: false });
                     }
                     if (f.value === '6_6_6' && (!form.segments_666 || form.segments_666.length !== 3)) {
@@ -213,6 +215,7 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                 >
                   <p className="font-semibold text-foreground text-xs">{f.label}</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">{f.desc}</p>
+                  {f.rec && <p className="text-[10px] text-muted-foreground/80 mt-0.5 italic">{f.rec}</p>}
                 </button>
               ))}
             </div>
@@ -233,7 +236,7 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                 {noIndividualSkins
                   ? 'Skins, KPs, and Deuces are won by the team — winnings split equally among all members.'
                   : aggregateForcesIndividualSkins
-                    ? 'Off: side games are individual in Aggregate format — each player competes on their own.'
+                    ? `Off: side games are individual in ${isVegas ? 'Las Vegas' : 'Aggregate'} format — each player competes on their own.`
                     : (form.skins_team_mode !== false
                       ? 'On: skins, KPs, and Deuces are won by the team and split equally among members.'
                       : 'Off: each player competes individually for skins, KPs, and Deuces, even in a team-format round.')}
@@ -242,12 +245,14 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                 <p className="text-xs text-muted-foreground italic">Side games must be team-based for this format — individual side games aren't available.</p>
               )}
               {aggregateForcesIndividualSkins && (
-                <p className="text-xs text-muted-foreground italic">Team side games aren't available in Aggregate — side games stay individual.</p>
+                <p className="text-xs text-muted-foreground italic">Team side games aren't available in {isVegas ? 'Las Vegas' : 'Aggregate'} — skins, KPs, and Deuces are per individual player.</p>
               )}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Team Size</label>
+                <label className="text-xs font-medium text-muted-foreground">
+                  Team Size{isVegas ? ' (3 or 4 — three balls count each hole)' : ''}
+                </label>
                 <div className="flex gap-2">
-                  {[2, 3, 4].map(n => (
+                  {teamSizeOptions.map(n => (
                     <button
                       key={n}
                       type="button"
@@ -260,6 +265,7 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                   ))}
                 </div>
               </div>
+              {!isVegas && (
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Handicap Formula</label>
                 <select
@@ -273,6 +279,26 @@ export default function GamesConfiguration({ form, updateForm, nextStep, prevSte
                   ))}
                 </select>
               </div>
+              )}
+              {isVegas && (
+                <VegasAllowanceInput
+                  round={form}
+                  value={form.vegas_hcp_percent}
+                  onChange={(v) => updateForm({ vegas_hcp_percent: v })}
+                  disabled={isChild}
+                />
+              )}
+              {isVegas && (
+                <div className="rounded-lg bg-accent/10 border border-accent/30 p-3">
+                  <p className="text-xs text-foreground leading-relaxed">
+                    <span className="font-semibold">Las Vegas — 1 Gross / 2 Net.</span> Each hole counts
+                    three balls: one player's gross plus two others' net. The app tries every combination
+                    and keeps the lowest total, so the gross ball isn't locked to the low raw score.
+                    Teams are ranked on one combined leaderboard paid from a single pot. Side games
+                    (skins, KPs, Deuces) are individual — each player plays for their own.
+                  </p>
+                </div>
+              )}
               {mainGame.format === '6_6_6' && (
                 <div className={isChild ? 'opacity-60 pointer-events-none' : ''}>
                   <Segments666Config

@@ -7,7 +7,7 @@ import { computeStandingsDisplay, rankLabel } from "@/lib/standingsRanks";
 const findPayoutForPlayer = (playerId, payouts) =>
   payouts?.find(p => p.player_id === playerId) ?? null;
 
-export default function GrossNetResults({ results, round, players, onEditScore, editMode, holdMainPayouts, isMultiFlight }) {
+export default function GrossNetResults({ results, round, players, onEditScore, editMode, holdMainPayouts, isMultiFlight, forceStacked }) {
   const payouts = results.payouts || [];
   const playersList = players || round?.players || [];
   const grossResults = results.gross_results || [];
@@ -60,7 +60,7 @@ export default function GrossNetResults({ results, round, players, onEditScore, 
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className={forceStacked ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 md:grid-cols-2 gap-4"}>
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">

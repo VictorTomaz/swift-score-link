@@ -1,64 +1,149 @@
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import InfoTooltip from "@/components/InfoTooltip";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle } from "lucide-react";
+import useSideGamePool from "@/hooks/useSideGamePool";
+import { teamSideGamesActive } from "@/lib/teamScoreEngine";
 
 export default function SideGamePlayers({ round, onUpdate }) {
   const players = round.players || [];
 
   const allPlayerIds = players.map(p => p.player_id);
 
-  // If a pool list is empty, the engine treats ALL players as participants — mirror that in the UI
-  const effectiveDeuceIds = (round.deuce_player_ids?.length > 0) ? round.deuce_player_ids : allPlayerIds;
-  const effectiveKpIds = (round.kp_player_ids?.length > 0) ? round.kp_player_ids : allPlayerIds;
-  const effectiveGrossSkinsIds = (round.gross_skins_player_ids?.length > 0) ? round.gross_skins_player_ids : allPlayerIds;
-  const effectiveNetSkinsIds = (round.net_skins_player_ids?.length > 0) ? round.net_skins_player_ids : allPlayerIds;
+  // An unconfigured pool means everyone; an explicitly cleared pool means nobody.
+  // Each pool keeps its own authoritative selection so a stripped realtime
+  // broadcast can never re-check boxes the organizer unchecked.
+  const deuce = useSideGamePool(round.deuce_player_ids, allPlayerIds, (v) => onUpdate({ deuce_player_ids: v }));
+  const kp = useSideGamePool(round.kp_player_ids, allPlayerIds, (v) => onUpdate({ kp_player_ids: v }));
+  const grossSkins = useSideGamePool(round.gross_skins_player_ids, allPlayerIds, (v) => onUpdate({ gross_skins_player_ids: v }));
+  const netSkins = useSideGamePool(round.net_skins_player_ids, allPlayerIds, (v) => onUpdate({ net_skins_player_ids: v }));
 
-  // Local state so UI doesn't snap back when the oversize realtime broadcast wipes cache fields
-  const [deucePlayerIds, setDeucePlayerIds] = useState(() => effectiveDeuceIds);
-  const [kpPlayerIds, setKpPlayerIds] = useState(() => effectiveKpIds);
-  const [grossSkinsPlayerIds, setGrossSkinsPlayerIds] = useState(() => effectiveGrossSkinsIds);
-  const [netSkinsPlayerIds, setNetSkinsPlayerIds] = useState(() => effectiveNetSkinsIds);
+  const deucePlayerIds = deuce.selectedIds;
+  const kpPlayerIds = kp.selectedIds;
+  const grossSkinsPlayerIds = grossSkins.selectedIds;
+  const netSkinsPlayerIds = netSkins.selectedIds;
 
-  // Re-sync local state when round prop updates (e.g. after adding/removing players)
-  useEffect(() => { setDeucePlayerIds((round.deuce_player_ids?.length > 0) ? round.deuce_player_ids : allPlayerIds); }, [round.deuce_player_ids, players.length]);
-  useEffect(() => { setKpPlayerIds((round.kp_player_ids?.length > 0) ? round.kp_player_ids : allPlayerIds); }, [round.kp_player_ids, players.length]);
-  useEffect(() => { setGrossSkinsPlayerIds((round.gross_skins_player_ids?.length > 0) ? round.gross_skins_player_ids : allPlayerIds); }, [round.gross_skins_player_ids, players.length]);
-  useEffect(() => { setNetSkinsPlayerIds((round.net_skins_player_ids?.length > 0) ? round.net_skins_player_ids : allPlayerIds); }, [round.net_skins_player_ids, players.length]);
+  const updateDeuce = deuce.update;
+  const updateKP = kp.update;
+  const updateGrossSkins = grossSkins.update;
+  const updateNetSkins = netSkins.update;
 
-  const updateDeuce = (ids) => { setDeucePlayerIds(ids); onUpdate({ deuce_player_ids: ids }); };
-  const updateKP = (ids) => { setKpPlayerIds(ids); onUpdate({ kp_player_ids: ids }); };
-  const updateGrossSkins = (ids) => { setGrossSkinsPlayerIds(ids); onUpdate({ gross_skins_player_ids: ids }); };
-  const updateNetSkins = (ids) => { setNetSkinsPlayerIds(ids); onUpdate({ net_skins_player_ids: ids }); };
+  const toggleDeuce = deuce.toggle;
+  const toggleKP = kp.toggle;
+  const toggleGrossSkins = grossSkins.toggle;
+  const toggleNetSkins = netSkins.toggle;
 
-  const toggleDeuce = (playerId) => {
-    const updated = deucePlayerIds.includes(playerId)
-      ? deucePlayerIds.filter(id => id !== playerId)
-      : [...deucePlayerIds, playerId];
-    updateDeuce(updated);
+  // ─── TEAM-LEVEL SELECTION ───────────────────────────────────
+  // The view follows the setup wizard's "Team Side Games" toggle (skins_team_mode):
+  //   ON  → team-level selection (check a whole team at once)
+  //   OFF → individual selection
+  const isTeamMode = !!round.team_mode;
+  const isTeamView = isTeamMode && teamSideGamesActive(round);
+
+  // Group ALL roster players into teams (mirrors buildTeams but includes unscored players)
+  const teams = React.useMemo(() => {
+    if (!isTeamMode) return [];
+    const teamSize = round.team_size || 2;
+    const hasGroupTags = players.some(p => (p.tee_group || "").trim());
+    if (hasGroupTags) {
+      const groups = {};
+      const unassigned = [];
+      for (const p of players) {
+        const tag = (p.tee_group || "").trim();
+        if (tag) {
+          if (!groups[tag]) groups[tag] = [];
+          groups[tag].push(p);
+        } else {
+          unassigned.push(p);
+        }
+      }
+      const grouped = Object.keys(groups).sort().map(tag => ({
+        team_id: tag,
+        team_name: groups[tag].map(p => p.name).join(" / "),
+        members: groups[tag],
+      }));
+      unassigned.forEach(p => {
+        grouped.push({ team_id: `solo_${p.player_id}`, team_name: p.name, members: [p] });
+      });
+      return grouped;
+    }
+    const result = [];
+    for (let i = 0; i < players.length; i += teamSize) {
+      const members = players.slice(i, i + teamSize);
+      const label = String.fromCharCode(65 + Math.floor(i / teamSize));
+      result.push({
+        team_id: `auto_${label}`,
+        team_name: members.map(p => p.name).join(" / "),
+        members,
+      });
+    }
+    return result;
+  }, [isTeamMode, players, round.team_size]);
+
+  // Toggle an entire team: if all members are in the pool, remove them; otherwise add them all
+  const toggleTeam = (memberIds, selectedIds, updateFn) => {
+    const allIn = memberIds.every(id => selectedIds.includes(id));
+    if (allIn) {
+      updateFn(selectedIds.filter(id => !memberIds.includes(id)));
+    } else {
+      updateFn([...new Set([...selectedIds, ...memberIds])]);
+    }
   };
 
-  const toggleKP = (playerId) => {
-    const updated = kpPlayerIds.includes(playerId)
-      ? kpPlayerIds.filter(id => id !== playerId)
-      : [...kpPlayerIds, playerId];
-    updateKP(updated);
-  };
-
-  const toggleGrossSkins = (playerId) => {
-    const updated = grossSkinsPlayerIds.includes(playerId)
-      ? grossSkinsPlayerIds.filter(id => id !== playerId)
-      : [...grossSkinsPlayerIds, playerId];
-    updateGrossSkins(updated);
-  };
-
-  const toggleNetSkins = (playerId) => {
-    const updated = netSkinsPlayerIds.includes(playerId)
-      ? netSkinsPlayerIds.filter(id => id !== playerId)
-      : [...netSkinsPlayerIds, playerId];
-    updateNetSkins(updated);
+  // Render the checkbox list for a side game pool — team view or individual view
+  const renderPoolList = (selectedIds, toggleFn, idPrefix) => {
+    if (isTeamView && teams.length > 0) {
+      return (
+        <div className="space-y-2 ml-2">
+          {teams.map(team => {
+            const memberIds = team.members.map(m => m.player_id);
+            const allIn = memberIds.every(id => selectedIds.includes(id));
+            return (
+              <div key={team.team_id} className="flex items-start gap-2">
+                <Checkbox
+                  id={`${idPrefix}-team-${team.team_id}`}
+                  checked={allIn}
+                  onCheckedChange={() => toggleTeam(memberIds, selectedIds, (ids) => {
+                    if (idPrefix === 'deuce') updateDeuce(ids);
+                    else if (idPrefix === 'kp') updateKP(ids);
+                    else if (idPrefix === 'gross-skins') updateGrossSkins(ids);
+                    else updateNetSkins(ids);
+                  })}
+                />
+                <div className="flex flex-col">
+                  <Label htmlFor={`${idPrefix}-team-${team.team_id}`} className="text-sm cursor-pointer font-medium">
+                    {team.team_name}
+                  </Label>
+                  {team.members.length > 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      {team.members.length} players
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-2 ml-2">
+        {players.map(player => (
+          <div key={player.player_id} className="flex items-center gap-2">
+            <Checkbox
+              id={`${idPrefix}-${player.player_id}`}
+              checked={selectedIds.includes(player.player_id)}
+              onCheckedChange={() => toggleFn(player.player_id)}
+            />
+            <Label htmlFor={`${idPrefix}-${player.player_id}`} className="text-sm cursor-pointer">
+              {player.name}
+            </Label>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (
@@ -76,20 +161,7 @@ export default function SideGamePlayers({ round, onUpdate }) {
                 <button onClick={() => updateDeuce([])} className="text-xs text-muted-foreground underline">Clear</button>
               </div>
             </div>
-            <div className="space-y-2 ml-2">
-              {players.map(player => (
-                <div key={player.player_id} className="flex items-center gap-2">
-                  <Checkbox
-                    id={`deuce-${player.player_id}`}
-                    checked={deucePlayerIds.includes(player.player_id)}
-                    onCheckedChange={() => toggleDeuce(player.player_id)}
-                  />
-                  <Label htmlFor={`deuce-${player.player_id}`} className="text-sm cursor-pointer">
-                    {player.name}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            {renderPoolList(deucePlayerIds, toggleDeuce, 'deuce')}
             <p className="text-xs text-muted-foreground">
               {deucePlayerIds.length} of {players.length} players selected
             </p>
@@ -111,20 +183,7 @@ export default function SideGamePlayers({ round, onUpdate }) {
                 <button onClick={() => updateKP([])} className="text-xs text-muted-foreground underline">Clear</button>
               </div>
             </div>
-            <div className="space-y-2 ml-2">
-              {players.map(player => (
-                <div key={player.player_id} className="flex items-center gap-2">
-                  <Checkbox
-                    id={`kp-${player.player_id}`}
-                    checked={kpPlayerIds.includes(player.player_id)}
-                    onCheckedChange={() => toggleKP(player.player_id)}
-                  />
-                  <Label htmlFor={`kp-${player.player_id}`} className="text-sm cursor-pointer">
-                    {player.name}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            {renderPoolList(kpPlayerIds, toggleKP, 'kp')}
             <p className="text-xs text-muted-foreground">
               {kpPlayerIds.length} of {players.length} players selected
             </p>
@@ -146,20 +205,7 @@ export default function SideGamePlayers({ round, onUpdate }) {
                 <button onClick={() => updateGrossSkins([])} className="text-xs text-muted-foreground underline">Clear</button>
               </div>
             </div>
-            <div className="space-y-2 ml-2">
-              {players.map(player => (
-                <div key={player.player_id} className="flex items-center gap-2">
-                  <Checkbox
-                    id={`gross-skins-${player.player_id}`}
-                    checked={grossSkinsPlayerIds.includes(player.player_id)}
-                    onCheckedChange={() => toggleGrossSkins(player.player_id)}
-                  />
-                  <Label htmlFor={`gross-skins-${player.player_id}`} className="text-sm cursor-pointer">
-                    {player.name}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            {renderPoolList(grossSkinsPlayerIds, toggleGrossSkins, 'gross-skins')}
             <p className="text-xs text-muted-foreground">
               {grossSkinsPlayerIds.length} of {players.length} players selected
             </p>
@@ -181,20 +227,7 @@ export default function SideGamePlayers({ round, onUpdate }) {
                 <button onClick={() => updateNetSkins([])} className="text-xs text-muted-foreground underline">Clear</button>
               </div>
             </div>
-            <div className="space-y-2 ml-2">
-              {players.map(player => (
-                <div key={player.player_id} className="flex items-center gap-2">
-                  <Checkbox
-                    id={`net-skins-${player.player_id}`}
-                    checked={netSkinsPlayerIds.includes(player.player_id)}
-                    onCheckedChange={() => toggleNetSkins(player.player_id)}
-                  />
-                  <Label htmlFor={`net-skins-${player.player_id}`} className="text-sm cursor-pointer">
-                    {player.name}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            {renderPoolList(netSkinsPlayerIds, toggleNetSkins, 'net-skins')}
             <p className="text-xs text-muted-foreground">
               {netSkinsPlayerIds.length} of {players.length} players selected
             </p>

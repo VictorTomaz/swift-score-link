@@ -4,7 +4,11 @@
   "properties": {
     "event_name": {
       "type": "string",
-      "description": "Name of the event"
+      "description": "Name of the event (tournament/competition name \u2014 shared across all flights in a multi-flight tournament)"
+    },
+    "flight_name": {
+      "type": "string",
+      "description": "Optional name for this specific flight (e.g. 'Championship Flight', 'President's Flight'). When set, displayed instead of the generic 'Flight N' label. The competition name (event_name) is inherited from the parent and shared across all flights."
     },
     "course_name": {
       "type": "string",
@@ -98,6 +102,15 @@
       "type": "number",
       "description": "Buy-in amount per player (main pot). For multi-day series rounds, this is the total series entry fee per player."
     },
+    "added_money": {
+      "type": "number",
+      "default": 0,
+      "description": "Lump sum of added money (sponsorship, added purse, etc.) folded into the main gross/net pot alongside player buy-ins. For multi-flight tournaments, splits across flights proportionally by player count."
+    },
+    "added_money_label": {
+      "type": "string",
+      "description": "Optional label for the added money (e.g. 'Sponsorship', 'Added Purse'). Shown in the pot breakdown on the results page."
+    },
     "is_multi_day": {
       "type": "boolean",
       "default": false,
@@ -174,17 +187,18 @@
         4
       ],
       "default": 2,
-      "description": "Number of players per team (2, 3, or 4) \u2014 used for team format scorecards"
+      "description": "Number of players per team (2, 3, or 4) \u2014 used for team format scorecards. Las Vegas (1 gross / 2 net) requires 3 or 4."
     },
     "team_format": {
       "type": "string",
       "enum": [
         "best_ball",
         "scramble",
-        "aggregate"
+        "aggregate",
+        "las_vegas"
       ],
       "default": "best_ball",
-      "description": "Team scorecard format: best_ball (individual rows + Gross/Net best-ball), scramble (one team score per hole), or aggregate (sum of all team scores per hole)"
+      "description": "Team scorecard format: best_ball (individual rows + Gross/Net best-ball), scramble (one team score per hole), aggregate (sum of all team scores per hole), or las_vegas (optimized 1 gross + 2 net per hole)"
     },
     "segments_666": {
       "type": "array",
@@ -219,10 +233,11 @@
         "team_best_ball",
         "team_6_6_6",
         "team_chapman",
-        "team_aggregate"
+        "team_aggregate",
+        "team_las_vegas"
       ],
       "default": "individual",
-      "description": "Game type: individual (standard play) or team-based formats (scramble, best ball, 6-6-6, chapman, aggregate)"
+      "description": "Game type: individual (standard play) or team-based formats (scramble, best ball, 6-6-6, chapman, aggregate, las vegas 1-gross/2-net)"
     },
     "hcp_formula": {
       "type": "string",
@@ -239,6 +254,10 @@
       ],
       "default": "combined_85",
       "description": "Team handicap formula: none (no handicap), individual (per-player handicap, no team adjustment), combined_avg, avg_30 (70% of combined average), combined_85 (85% of combined), usga_scramble (25% low / 15% high), split_60_40 (60% low / 40% high), split_35_15 (35% low / 15% high), or sum (full combined)"
+    },
+    "vegas_hcp_percent": {
+      "type": "number",
+      "description": "Las Vegas only: custom handicap allowance percentage (0\u2013200) applied to every player's course handicap for the whole round \u2014 scorecard dots, team Gross/Net rows, and individual net side games. When unset, the allowance is derived from hcp_formula (85% of Combined \u2192 85%, 70% of Combined Average \u2192 70%, No Handicap \u2192 0%, anything else \u2192 100%)."
     },
     "games": {
       "type": "array",
@@ -273,7 +292,8 @@
               "chapman",
               "6_6_6",
               "aggregate",
-              "stableford"
+              "stableford",
+              "las_vegas"
             ],
             "default": "stroke_play",
             "description": "Scoring format for this game"

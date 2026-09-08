@@ -34,6 +34,9 @@
  * @param {object} parentRound     - the parent (Flight 1 / Day 1) round — source of purse & places
  * @returns {object} merged results with field standings + per-flight cumulative standings
  */
+import { applyConflictResolution } from './swiftScoreEngine';
+import { applyTeamConflictResolution, splitTeamKpPayoutsAcrossRounds } from './teamScoreEngine';
+
 export function computeHybridSeriesResults(finalRound, finalResults, siblingPairs, parentRound) {
   const currentFlight = finalRound.flight_number || 1;
 
@@ -52,6 +55,11 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
 
   // For each flight: merge days into cumulative results
   const flightMerged = [];
+  // Collect KP pots + winners from all deduped days of all flights for
+  // tournament-wide KP pooling (hybrid multi-flight).
+  let hybridTotalKpPot = 0;
+  const hybridAllKpWinners = [];
+  const hybridKpNameMap = {};
   for (const [fn, days] of Object.entries(flightGroups)) {
     // Deduplicate by date: if multiple rounds share the same date within a
     // flight (e.g. a duplicate Day 2 was created), keep only one — the
@@ -76,6 +84,24 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
     const sorted = deduped.sort((a, b) => new Date(a.round?.date) - new Date(b.round?.date));
     const day1 = sorted[0]; // Day 1 has the pot (buy-in collected here)
 
+    // Tournament-wide KP: collect this flight's deduped day pots + winners.
+    // Compute the per-round KP pot from RAW round data (player count × buy-in)
+    // instead of results.kp_separate_pot — the final round's saved results may
+    // have kp_separate_pot overwritten by a previous hybrid computation, which
+    // would corrupt the pooled total (e.g. $132.5 instead of $165).
+    sorted.forEach(({ round, results }) => {
+      const kpPot = round?.kps_enabled && round?.kp_separate_buy_in
+        ? (round.kp_player_ids?.length || round?.players?.length || 0) * (round?.kp_buy_in || 0)
+        : 0;
+      hybridTotalKpPot += kpPot;
+      (round?.kp_winners || []).forEach(kp => {
+        if (kp?.player_id) hybridAllKpWinners.push({ ...kp, flight: Number(fn), date: round?.date });
+      });
+      (round?.players || []).forEach(p => {
+        if (p.player_id && p.name) hybridKpNameMap[p.player_id] = p.name;
+      });
+    });
+
     // Sum gross/net totals per player across all days of this flight
     const playerMap = {};
     sorted.forEach(({ results }) => {
@@ -95,8 +121,30 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
       });
     });
 
+    // Team event: also merge team results across days (cumulative within flight)
+    const isTeamEvt = !!(finalRound.game_type && finalRound.game_type !== 'individual');
+    const teamMap = {};
+    if (isTeamEvt) {
+      sorted.forEach(({ results }) => {
+        (results.team_gross_results || []).forEach(t => {
+          if (!teamMap[t.team_id]) {
+            teamMap[t.team_id] = { team_id: t.team_id, team_name: t.team_name, members: t.members || [], gross: 0, net: 0, dq: false };
+          }
+          const e = teamMap[t.team_id];
+          if (!t.disqualified && t.best_ball_gross != null) e.gross += t.best_ball_gross;
+          else e.dq = true;
+        });
+        (results.team_net_results || []).forEach(t => {
+          const e = teamMap[t.team_id];
+          if (!e) return;
+          if (!t.disqualified && t.best_ball_net != null) e.net += t.best_ball_net;
+          else e.dq = true;
+        });
+      });
+    }
+
     const allPlayers = Object.values(playerMap);
-    const flightLabel = sorted[0]?.round?.event_name || `Flight ${fn}`;
+    const flightLabel = sorted[0]?.round?.flight_name || `Flight ${fn}`;
     // Sort by score ascending (or descending for stableford). Without this,
     // the standings arrays are in insertion order and the payout loop in
     // computeFlightSeriesResults (which assumes sorted input) assigns prizes
@@ -124,12 +172,27 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
         flight: flightLabel,
         disqualified: p.dq,
       })), "net_total"),
+      ...(isTeamEvt ? {
+        team_gross_results: Object.values(teamMap).map(t => ({
+          team_id: t.team_id, team_name: t.team_name, members: t.members,
+          best_ball_gross: t.dq ? null : t.gross, gross_payout: 0, disqualified: t.dq,
+        })).sort((a, b) => (a.disqualified ? 1 : 0) - (b.disqualified ? 1 : 0) || ((a.best_ball_gross ?? 999) - (b.best_ball_gross ?? 999))),
+        team_net_results: Object.values(teamMap).map(t => ({
+          team_id: t.team_id, team_name: t.team_name, members: t.members,
+          best_ball_net: t.dq ? null : t.net, net_payout: 0, disqualified: t.dq,
+        })).sort((a, b) => (a.disqualified ? 1 : 0) - (b.disqualified ? 1 : 0) || ((a.best_ball_net ?? 999) - (b.best_ball_net ?? 999))),
+      } : {}),
       // Day 1's pot values (buy-in collected there; subsequent days have buy_in=0)
       total_pot: day1.results?.total_pot ?? 0,
       gross_pot: day1.results?.gross_pot ?? 0,
       net_pot: day1.results?.net_pot ?? 0,
       gross_places: day1.results?.gross_places || [],
       net_places: day1.results?.net_places || [],
+      // Added money (e.g. sponsorship) is folded into Day 1's pot during per-round
+      // compute. Carry it through so computeFlightSeriesResults can extract it and
+      // redistribute proportionally — without this, the added money stays in the
+      // parent flight's pot AND gets double-counted when split proportionally.
+      added_money: day1.results?.added_money ?? 0,
       // Collect side games from ALL days (computeFlightSeriesResults merges by player_id)
       payouts: sorted.flatMap(({ results }) => results.payouts || []),
       stableford: finalResults.stableford,
@@ -152,6 +215,14 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
   flightMerged.forEach(f => {
     [...(f.results.gross_results || []), ...(f.results.net_results || [])].forEach(r => {
       if (r.player_id) playerFlightMap[r.player_id] = String(f.flightNumber);
+    });
+  });
+  // Also map players from raw round rosters (covers KP-only players not in standings)
+  Object.entries(flightGroups).forEach(([fn, days]) => {
+    days.forEach(({ round }) => {
+      (round?.players || []).forEach(p => {
+        if (p.player_id) playerFlightMap[p.player_id] = String(fn);
+      });
     });
   });
 
@@ -203,11 +274,15 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
       flightNumber: currentFlight,
       gross_results: hybridResults.flight_own_gross || [],
       net_results: hybridResults.flight_own_net || [],
+      team_gross_results: finalFlight.results?.team_gross_results || [],
+      team_net_results: finalFlight.results?.team_net_results || [],
     },
     ...otherFlights.map(f => ({
       flightNumber: f.flightNumber,
       gross_results: f.results?.gross_results || [],
       net_results: f.results?.net_results || [],
+      team_gross_results: f.results?.team_gross_results || [],
+      team_net_results: f.results?.team_net_results || [],
     })),
   ];
 
@@ -219,7 +294,81 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
   const currentDayGrossSkins = finalResults.gross_skins || [];
   const currentDayNetSkins = finalResults.net_skins || [];
 
-  return { ...hybridResults, all_flight_standings: allFlightStandings, _current_day_payouts: currentDayPayouts, player_flight_map: playerFlightMap, gross_skins: currentDayGrossSkins, net_skins: currentDayNetSkins };
+  // Hybrid tournament-wide KP: pool ALL days' and flights' KP pots into one
+  // purse and divide equally among EVERY KP winner entry (each day's winner
+  // counts separately, unlike non-hybrid which dedupes by hole). Override the
+  // per-flight KP fields so the KP Winners card, pot breakdown, and payout
+  // table all reflect one tournament-wide KP contest.
+  let hybridKpOverride = {};
+  if (hybridTotalKpPot > 0 && hybridAllKpWinners.length > 0) {
+    const perKpAmount = hybridTotalKpPot / hybridAllKpWinners.length;
+    const kpResults = hybridAllKpWinners.map(kp => ({
+      ...kp,
+      name: hybridKpNameMap[kp.player_id] || kp.player_id,
+    }));
+    const kpPayouts = {};
+    kpResults.forEach(kp => {
+      kpPayouts[kp.player_id] = (kpPayouts[kp.player_id] || 0) + perKpAmount;
+    });
+    // Ensure all KP winners exist in the payouts array, then override kp_payout
+    const payoutIds = new Set((hybridResults.payouts || []).map(p => p.player_id));
+    kpResults.forEach(kp => {
+      if (!payoutIds.has(kp.player_id)) {
+        hybridResults.payouts.push({
+          player_id: kp.player_id, name: kp.name,
+          gross_payout: 0, net_payout: 0, field_gross_payout: 0, field_net_payout: 0,
+          kp_payout: kpPayouts[kp.player_id] || 0,
+          gross_skins_payout: 0, net_skins_payout: 0, deuce_payout: 0,
+          total_payout: kpPayouts[kp.player_id] || 0,
+        });
+      }
+    });
+    (hybridResults.payouts || []).forEach(p => {
+      p.kp_payout = kpPayouts[p.player_id] || 0;
+      p.total_payout = (p.gross_payout || 0) + (p.net_payout || 0) +
+        (p.field_gross_payout || 0) + (p.field_net_payout || 0) +
+        (p.kp_payout || 0) + (p.gross_skins_payout || 0) +
+        (p.net_skins_payout || 0) + (p.deuce_payout || 0);
+    });
+    // Team side games: pool each team's KP winnings and split equally among members.
+    splitTeamKpPayoutsAcrossRounds(
+      Object.values(flightGroups).flat().map(d => d.round),
+      hybridResults.payouts
+    );
+    hybridKpOverride = {
+      kp_results: kpResults,
+      kp_per_entry_amount: perKpAmount,
+      kp_separate_pot: hybridTotalKpPot,
+    };
+  }
+
+  // Aggregate side-game pots across ALL days of ALL flights so the pot
+  // breakdown on the tournament results page shows the true tournament-wide
+  // totals. computeFlightSeriesResults receives MERGED per-flight results
+  // (which omit these fields), so without this the Gross/Net Skins and Deuce
+  // pot cards are missing from the summary grid.
+  const allDayResults = Object.values(flightGroups).flat().map(d => d.results);
+  const hybridGrossSkinsPot = allDayResults.reduce((s, r) => s + (r?.gross_skins_separate_pot || 0), 0);
+  const hybridNetSkinsPot = allDayResults.reduce((s, r) => s + (r?.net_skins_separate_pot || 0), 0);
+  const hybridGrossSkinsAllocated = allDayResults.reduce((s, r) => s + (r?.gross_skins_allocated_pot || 0), 0);
+  const hybridNetSkinsAllocated = allDayResults.reduce((s, r) => s + (r?.net_skins_allocated_pot || 0), 0);
+  const hybridDeucePot = allDayResults.reduce((s, r) => s + (r?.deuce_pot || 0), 0);
+  const hybridSidePot = allDayResults.reduce((s, r) => s + (r?.side_pot || 0), 0);
+
+  return {
+    ...hybridResults, ...hybridKpOverride,
+    gross_skins_separate_pot: hybridGrossSkinsPot,
+    net_skins_separate_pot: hybridNetSkinsPot,
+    gross_skins_allocated_pot: hybridGrossSkinsAllocated,
+    net_skins_allocated_pot: hybridNetSkinsAllocated,
+    deuce_pot: hybridDeucePot,
+    side_pot: hybridSidePot,
+    all_flight_standings: allFlightStandings,
+    _current_day_payouts: currentDayPayouts,
+    player_flight_map: playerFlightMap,
+    gross_skins: currentDayGrossSkins,
+    net_skins: currentDayNetSkins,
+  };
 }
 
 /**
@@ -260,6 +409,56 @@ function usgaScorecardPlayoff(a, b, isNet) {
     if (d !== 0) return d;
   }
   return a.name.localeCompare(b.name);
+}
+
+/**
+ * Multi-flight (non-hybrid) tournament-wide KP.
+ *
+ * All flights' KP pots are pooled into one tournament purse and divided
+ * equally across EVERY par-3 on the course (per-hole, not per-flight). Each
+ * par-3 has a single winner — the organizer assigns each par-3 to a flight at
+ * setup (the flight that "owns" it), and any extra par-3 is an "open" hole
+ * whose winner is recorded manually on one flight's scorecard. Every winner
+ * receives the same per-hole amount = total purse / number of par-3s.
+ *
+ * @returns {{ kpResults: Array, kpPayouts: Object, perKpAmount: number, totalKpPot: number }}
+ */
+function computeTournamentWideKPs(finalRound, finalResults, siblingPairs) {
+  // Pool every flight's KP separate pot into one tournament purse.
+  let totalKpPot = (finalResults.kp_separate_pot || 0);
+  siblingPairs.forEach(({ results }) => {
+    totalKpPot += (results?.kp_separate_pot || 0);
+  });
+
+  // Collect all KP winners across every flight. Each par-3 should have exactly
+  // one recorded winner (the owning flight, or the manually-picked winner for
+  // an open par-3). Dedupe by hole — first recorded winner wins — so a par-3
+  // accidentally recorded on two flights pays only once.
+  const winnersByHole = {};
+  const allRounds = [finalRound, ...siblingPairs.map(s => s.round)];
+  allRounds.forEach(r => {
+    (r?.kp_winners || []).forEach(kp => {
+      if (!kp || !kp.player_id) return;
+      if (winnersByHole[kp.hole] == null) winnersByHole[kp.hole] = kp;
+    });
+  });
+  const kpResults = Object.values(winnersByHole).sort((a, b) => a.hole - b.hole);
+
+  // Divide the purse across the par-3s that actually have a recorded winner,
+  // so the full pot always pays out (no forfeited shares). Falls back to the
+  // total par-3 count only when no winners are recorded yet (preview state).
+  const par = finalRound.par || [];
+  const par3Count = par.filter(p => p === 3).length;
+  const winnersCount = kpResults.length;
+  const divisor = winnersCount > 0 ? winnersCount : (par3Count || 1);
+  const perKpAmount = divisor > 0 ? totalKpPot / divisor : 0;
+
+  const kpPayouts = {};
+  kpResults.forEach(kp => {
+    kpPayouts[kp.player_id] = (kpPayouts[kp.player_id] || 0) + perKpAmount;
+  });
+
+  return { kpResults, kpPayouts, perKpAmount, totalKpPot };
 }
 
 /**
@@ -316,9 +515,9 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
   const flightOwnGross = (finalResults.gross_results || []).map(r => ({ ...r }));
   const flightOwnNet = (finalResults.net_results || []).map(r => ({ ...r }));
 
-  collect(finalResults, finalRound.event_name || 'Final Flight', finalRound);
+  collect(finalResults, finalRound.flight_name || `Flight ${finalRound.flight_number || 1}`, finalRound);
   siblingPairs.forEach(({ round, results }) => {
-    collect(results, round?.event_name || 'Flight', round);
+    collect(results, round?.flight_name || `Flight ${round?.flight_number || 1}`, round);
   });
 
   const allPlayers = Object.values(playerMap);
@@ -369,6 +568,19 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     || parentRound?.results?.gross_pot || 0;
   const netPot = allFlightResults.reduce((sum, r) => sum + (r?.net_pot ?? 0), 0)
     || parentRound?.results?.net_pot || 0;
+  // Added money (e.g. sponsorship) is folded into the parent flight's pot during
+  // per-round compute. Here we extract it so it can be redistributed PROPORTIONALLY
+  // by player count across all flights — each flight keeps its own buy-in pot.
+  const totalAddedMoney = parentRound?.added_money || allFlightResults.reduce((sum, r) => sum + (r?.added_money || 0), 0) || 0;
+  const parentGrossPotWithAdded = parentRound?.results?.gross_pot || 0;
+  const parentNetPotWithAdded = parentRound?.results?.net_pot || 0;
+  const parentSumPot = parentGrossPotWithAdded + parentNetPotWithAdded;
+  const addedGrossTotal = totalAddedMoney > 0 && parentSumPot > 0
+    ? totalAddedMoney * (parentGrossPotWithAdded / parentSumPot)
+    : totalAddedMoney / 2;
+  const addedNetTotal = totalAddedMoney > 0 && parentSumPot > 0
+    ? totalAddedMoney * (parentNetPotWithAdded / parentSumPot)
+    : totalAddedMoney / 2;
   // Field prizes: when enabled on the parent round, each prize is carved from
   // its respective purse (gross/net) — not the combined total pot. When
   // disabled, no field prizes are awarded. Backward compat: old rounds with
@@ -390,6 +602,13 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     fieldNetPrize = (parentRound?.field_net_prize > 0) ? parentRound.field_net_prize : 0;
   }
 
+  // Field prizes are only awarded when explicitly enabled (or legacy rounds
+  // with fixed prize amounts). When disabled, no field winners are computed —
+  // players stay in their own flight's standings and no Field Prizes card shows.
+  const fieldPrizesActive = parentRound?.field_prizes_enabled === true ||
+    (parentRound?.field_prizes_enabled == null &&
+     ((parentRound?.field_gross_prize > 0) || (parentRound?.field_net_prize > 0)));
+
   // Field winners — lowest gross and lowest net across ALL flights.
   // Ties broken by USGA scorecard playoff (last 9 → 6 → 3 → backward).
   // No double dipping: if the same player has the lowest gross AND lowest net,
@@ -401,24 +620,28 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     const tied = eligible.filter(r => r[isNet ? 'net_total' : 'gross_total'] === best);
     return tied.length === 1 ? tied[0] : tied.sort((a, b) => usgaScorecardPlayoff(a, b, isNet))[0];
   };
-  const fieldGrossWinner = resolveFieldWinner(fieldGross, false);
-  let fieldNetWinner = fieldNet.find(r =>
-    !r.disqualified && r.net_total != null && r.player_id !== fieldGrossWinner?.player_id
-  );
-  // If the gross winner also has the lowest net, break the tie among remaining players
-  if (fieldGrossWinner) {
-    const netEligible = fieldNet.filter(r =>
-      !r.disqualified && r.net_total != null && r.player_id !== fieldGrossWinner.player_id
+  let fieldGrossWinner = undefined;
+  let fieldNetWinner = undefined;
+  if (fieldPrizesActive) {
+    fieldGrossWinner = resolveFieldWinner(fieldGross, false);
+    fieldNetWinner = fieldNet.find(r =>
+      !r.disqualified && r.net_total != null && r.player_id !== fieldGrossWinner?.player_id
     );
-    if (netEligible.length > 0) {
-      const bestNet = netEligible[0].net_total;
-      const netTied = netEligible.filter(r => r.net_total === bestNet);
-      fieldNetWinner = netTied.length === 1 ? netTied[0] : netTied.sort((a, b) => usgaScorecardPlayoff(a, b, true))[0];
+    // If the gross winner also has the lowest net, break the tie among remaining players
+    if (fieldGrossWinner) {
+      const netEligible = fieldNet.filter(r =>
+        !r.disqualified && r.net_total != null && r.player_id !== fieldGrossWinner.player_id
+      );
+      if (netEligible.length > 0) {
+        const bestNet = netEligible[0].net_total;
+        const netTied = netEligible.filter(r => r.net_total === bestNet);
+        fieldNetWinner = netTied.length === 1 ? netTied[0] : netTied.sort((a, b) => usgaScorecardPlayoff(a, b, true))[0];
+      }
     }
-  }
-  // Fallback: if no other eligible net winner (tiny field), let the gross winner take both
-  if (!fieldNetWinner) {
-    fieldNetWinner = resolveFieldWinner(fieldNet, true);
+    // Fallback: if no other eligible net winner (tiny field), let the gross winner take both
+    if (!fieldNetWinner) {
+      fieldNetWinner = resolveFieldWinner(fieldNet, true);
+    }
   }
 
   // No double dipping: remove BOTH field prize winners from this flight's
@@ -436,11 +659,12 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
   }
 
   // ── Per-flight gross/net payouts ──
-  // The total pot is collected on the parent (Flight 1). In a multi-flight
-  // tournament each flight has DIFFERENT players, so the pot must be split
-  // across flights proportionally by player count. Each flight then pays its
-  // own gross/net winners from its share. Side game payouts (skins, KPs,
-  // deuces) are preserved from each flight's own computeResults.
+  // Each flight KEEPS its own buy-in pot — buy-in money is not redistributed
+  // across flights. The added money (e.g. sponsorship, entered on the parent
+  // round) is the only portion split proportionally by player count. The field
+  // prize (Low Gross/Net of the Field) is carved from the combined pot, which
+  // reduces the added money available for proportional distribution. Side game
+  // payouts (skins, KPs, deuces) are preserved from each flight's own computeResults.
 
   // 1. Collect existing payouts (preserves side games), zero out gross/net
   const flightPayoutsMap = {};
@@ -459,18 +683,22 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
       };
     }
   };
-  const mergeSideGames = (p) => {
+  // Side games (gross skins, net skins, deuces) settle PER-DAY. Each day's
+  // results contain that day's side game payouts as separate entries (one per
+  // player per day). Accumulate them into the combined payouts so the Final
+  // Payouts table shows each player's total side game winnings across all days
+  // of their flight. KP is handled separately (tournament-wide pooling) so it
+  // is NOT accumulated here.
+  const accumulateSideGames = (p) => {
     ensurePlayer(p);
-    if (!p || !p.player_id) return;
-    const entry = flightPayoutsMap[p.player_id];
-    entry.kp_payout += (p.kp_payout || 0);
-    entry.gross_skins_payout += (p.gross_skins_payout || 0);
-    entry.net_skins_payout += (p.net_skins_payout || 0);
-    entry.deuce_payout += (p.deuce_payout || 0);
+    const fp = flightPayoutsMap[p.player_id];
+    fp.gross_skins_payout += (p.gross_skins_payout || 0);
+    fp.net_skins_payout += (p.net_skins_payout || 0);
+    fp.deuce_payout += (p.deuce_payout || 0);
   };
-  (finalResults.payouts || []).forEach(mergeSideGames);
+  (finalResults.payouts || []).forEach(accumulateSideGames);
   siblingPairs.forEach(({ results }) => {
-    (results.payouts || []).forEach(mergeSideGames);
+    (results.payouts || []).forEach(accumulateSideGames);
   });
 
   // 2. Pot available for flight-level gross/net (after field prize carve-out).
@@ -488,20 +716,36 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
   // share than its siblings. The payout-assignment loop below already skips
   // field winners, so they don't need to be removed from the count.
   const totalPlayers = allPlayers.length;
+  // Declared BEFORE flightStandingsList (which references them as fallbacks) —
+  // referencing a `const` before its declaration throws at runtime.
+  const parentGrossPot = parentRound?.results?.gross_pot || finalResults.gross_pot || 0;
+  const parentNetPot = parentRound?.results?.net_pot || finalResults.net_pot || 0;
+  // Team events pay by TEAM, not by individual. Without this, a team could be
+  // paid twice — one member winning gross while their partner won net — which
+  // violates the single-win (no double dipping) rule. Team standings are carried
+  // on each flight's merged results.
+  const isTeamEvent = !!(finalRound.game_type && finalRound.game_type !== 'individual') ||
+    finalRound.team_mode === true;
   const flightStandingsList = [
     { gross: (finalResults.gross_results || []).filter(r => !r.disqualified && r.gross_total != null),
       net: (finalResults.net_results || []).filter(r => !r.disqualified && r.net_total != null),
+      teamGross: finalResults.team_gross_results || [],
+      teamNet: finalResults.team_net_results || [],
       flightGrossPlaces: finalResults.gross_places || grossPlaces,
       flightNetPlaces: finalResults.net_places || netPlaces,
       ownGrossPot: finalResults.gross_pot || parentGrossPot,
-      ownNetPot: finalResults.net_pot || parentNetPot },
+      ownNetPot: finalResults.net_pot || parentNetPot,
+      flightAddedMoney: finalResults.added_money || 0 },
     ...siblingPairs.map(s => ({
       gross: (s.results.gross_results || []).filter(r => !r.disqualified && r.gross_total != null),
       net: (s.results.net_results || []).filter(r => !r.disqualified && r.net_total != null),
+      teamGross: s.results.team_gross_results || [],
+      teamNet: s.results.team_net_results || [],
       flightGrossPlaces: s.results.gross_places || grossPlaces,
       flightNetPlaces: s.results.net_places || netPlaces,
       ownGrossPot: s.results.gross_pot || parentGrossPot,
       ownNetPot: s.results.net_pot || parentNetPot,
+      flightAddedMoney: s.results.added_money || 0,
     })),
   ];
 
@@ -510,8 +754,6 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
   // gross_pot/net_pot — not the combined pot. So the ratio must divide by a
   // single flight's pot, not the combined grossPot/netPot, otherwise every
   // place amount is under-scaled (e.g. halved for 2 flights).
-  const parentGrossPot = parentRound?.results?.gross_pot || finalResults.gross_pot || 0;
-  const parentNetPot = parentRound?.results?.net_pot || finalResults.net_pot || 0;
 
   // Ensure field prizes are at least as large as the highest per-flight 1st
   // place payout. The "Low Gross/Net of the Field" is the overall winner —
@@ -519,15 +761,21 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
   // each flight's 1st place would be WITHOUT the field prize carve-out, then
   // bump the field prize if needed.
   if (fieldGrossPrize > 0 || fieldNetPrize > 0) {
-    const maxGross1st = Math.max(0, ...flightStandingsList.map(({ gross, flightGrossPlaces, ownGrossPot }) => {
+    const maxGross1st = Math.max(0, ...flightStandingsList.map(({ gross, flightGrossPlaces, ownGrossPot, flightAddedMoney }) => {
       const count = (gross || []).length;
       if (count === 0 || totalPlayers === 0 || ownGrossPot <= 0) return 0;
-      return (flightGrossPlaces[0] || 0) * (grossPot * (count / totalPlayers) / ownGrossPot);
+      const flightAddedGross = totalAddedMoney > 0 ? flightAddedMoney * (addedGrossTotal / totalAddedMoney) : 0;
+      const buyInGross = ownGrossPot - flightAddedGross;
+      const flightGrossPotNoField = buyInGross + addedGrossTotal * (count / totalPlayers);
+      return (flightGrossPlaces[0] || 0) * (flightGrossPotNoField / ownGrossPot);
     }));
-    const maxNet1st = Math.max(0, ...flightStandingsList.map(({ net, flightNetPlaces, ownNetPot }) => {
+    const maxNet1st = Math.max(0, ...flightStandingsList.map(({ net, flightNetPlaces, ownNetPot, flightAddedMoney }) => {
       const count = (net || []).length;
       if (count === 0 || totalPlayers === 0 || ownNetPot <= 0) return 0;
-      return (flightNetPlaces[0] || 0) * (netPot * (count / totalPlayers) / ownNetPot);
+      const flightAddedNet = totalAddedMoney > 0 ? flightAddedMoney * (addedNetTotal / totalAddedMoney) : 0;
+      const buyInNet = ownNetPot - flightAddedNet;
+      const flightNetPotNoField = buyInNet + addedNetTotal * (count / totalPlayers);
+      return (flightNetPlaces[0] || 0) * (flightNetPotNoField / ownNetPot);
     }));
     fieldGrossPrize = Math.max(fieldGrossPrize, maxGross1st);
     fieldNetPrize = Math.max(fieldNetPrize, maxNet1st);
@@ -535,14 +783,20 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     flightNetPotTotal = Math.max(0, netPot - fieldNetPrize);
   }
 
-  const flightGrossWinnersList = []; // per-flight Sets, used to filter net display standings
-
-  flightStandingsList.forEach(({ gross, net, flightGrossPlaces: rawGrossPlaces, flightNetPlaces: rawNetPlaces, ownGrossPot, ownNetPot }) => {
+  flightStandingsList.forEach(({ gross, net, teamGross, teamNet, flightGrossPlaces: rawGrossPlaces, flightNetPlaces: rawNetPlaces, ownGrossPot, ownNetPot, flightAddedMoney }) => {
     const flightPlayerCount = (gross || []).length;
     if (flightPlayerCount === 0 || totalPlayers === 0) return;
     const flightShare = flightPlayerCount / totalPlayers;
-    const flightGrossPot = flightGrossPotTotal * flightShare;
-    const flightNetPot = flightNetPotTotal * flightShare;
+    // Each flight keeps its own buy-in pot; the added money (folded into the
+    // parent flight's pot during per-round compute) is extracted and split
+    // proportionally by player count. The field prize is carved from the
+    // combined pot, reducing the added money available for distribution.
+    const flightAddedGross = totalAddedMoney > 0 ? flightAddedMoney * (addedGrossTotal / totalAddedMoney) : 0;
+    const flightAddedNet = totalAddedMoney > 0 ? flightAddedMoney * (addedNetTotal / totalAddedMoney) : 0;
+    const buyInGrossPot = ownGrossPot - flightAddedGross;
+    const buyInNetPot = ownNetPot - flightAddedNet;
+    const flightGrossPot = buyInGrossPot + (addedGrossTotal - fieldGrossPrize) * flightShare;
+    const flightNetPot = buyInNetPot + (addedNetTotal - fieldNetPrize) * flightShare;
 
     // Scale this flight's own place amounts to its pot share
     const grossRatio = ownGrossPot > 0 ? flightGrossPot / ownGrossPot : 0;
@@ -550,91 +804,66 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     const flightGrossPlaces = rawGrossPlaces.map(v => v * grossRatio);
     const flightNetPlaces = rawNetPlaces.map(v => v * netRatio);
 
-    // Assign gross payouts to top finishers (skip BOTH field winners —
-    // no double dipping: a field prize winner can't also win flight gross/net)
-    //
-    // TIE RULE (standard golf): a tied group of N players shares the combined
-    // money from the N consecutive place slots they occupy, split equally.
-    // E.g. a 2-way tie for 1st consumes 1st+2nd place money ÷ 2 each.
-    const flightGrossWinners = new Set();
-    flightGrossWinnersList.push(flightGrossWinners);
+    // Assign gross/net payouts using the SAME higher-pay conflict resolution
+    // as the per-round engine (applyConflictResolution): a player who qualifies
+    // for both gross and net keeps whichever pays MORE, and the other spot
+    // cascades to the next eligible player. Field prize winners are excluded
+    // from both. This replaces the old rule that always excluded gross winners
+    // from net — which could leave a player with a higher net payout stuck
+    // with a lower gross tie-split instead.
+    // ── Team events: pay by TEAM, enforcing the single-win rule per team ──
+    // A team that qualifies for both gross and net keeps whichever pays more;
+    // the other spot cascades to the next eligible team. Each team's prize is
+    // then split equally among its members. This is what prevents a team from
+    // collecting in both gross and net (double dipping).
+    if (isTeamEvent && (teamGross || []).length > 0) {
+      const tGross = (teamGross || []).filter(t => !t.disqualified && t.best_ball_gross != null);
+      const tNet = (teamNet || []).filter(t => !t.disqualified && t.best_ball_net != null);
+      const { grossPayouts: tgp, netPayouts: tnp } = applyTeamConflictResolution(
+        tGross, tNet, flightGrossPlaces, flightNetPlaces
+      );
+      // Write the team totals back onto the standings so the per-flight team
+      // cards render the same amounts the payout table shows.
+      (teamGross || []).forEach(t => { t.gross_payout = tgp[t.team_id] || 0; });
+      (teamNet || []).forEach(t => { t.net_payout = tnp[t.team_id] || 0; });
+
+      const applyShares = (teams, payoutMap, key) => {
+        (teams || []).forEach(t => {
+          const amount = payoutMap[t.team_id] || 0;
+          if (amount <= 0 || !t.members?.length) return;
+          const share = amount / t.members.length;
+          t.members.forEach(m => {
+            ensurePlayer({ player_id: m.player_id, name: m.name });
+            flightPayoutsMap[m.player_id][key] = share;
+          });
+        });
+      };
+      applyShares(teamGross, tgp, 'gross_payout');
+      applyShares(teamNet, tnp, 'net_payout');
+      return;
+    }
+
     const grossEligible = (gross || []).filter(r =>
       r.player_id !== fieldGrossWinner?.player_id &&
       r.player_id !== fieldNetWinner?.player_id
     );
-    let grossPlaceIdx = 0;
-    let grossGroupStart = 0;
-    while (grossGroupStart < grossEligible.length && grossPlaceIdx < flightGrossPlaces.length) {
-      const currentScore = grossEligible[grossGroupStart].gross_total;
-      let grossGroupEnd = grossGroupStart + 1;
-      while (grossGroupEnd < grossEligible.length &&
-             grossEligible[grossGroupEnd].gross_total === currentScore) {
-        grossGroupEnd++;
-      }
-      const tiedPlayers = grossEligible.slice(grossGroupStart, grossGroupEnd);
-      const slotsConsumed = Math.min(tiedPlayers.length, flightGrossPlaces.length - grossPlaceIdx);
-      const combinedPrize = flightGrossPlaces.slice(grossPlaceIdx, grossPlaceIdx + slotsConsumed)
-        .reduce((a, b) => a + b, 0);
-      const share = combinedPrize / tiedPlayers.length;
-      tiedPlayers.forEach(p => {
-        ensurePlayer(p);
-        flightPayoutsMap[p.player_id].gross_payout = share;
-        flightGrossWinners.add(p.player_id);
-      });
-      grossPlaceIdx += slotsConsumed;
-      grossGroupStart = grossGroupEnd;
-    }
-
-    // Assign net payouts to top finishers (skip field winners AND this
-    // flight's gross winners — no double dipping: a gross winner can't
-    // also win a net payout. The DISPLAY standings are also filtered below
-    // to show the actual net payout recipients instead of gross winners
-    // with $0.)
-    // Same tie-splitting logic as gross.
     const netEligible = (net || []).filter(r =>
       r.player_id !== fieldNetWinner?.player_id &&
-      r.player_id !== fieldGrossWinner?.player_id &&
-      !flightGrossWinners.has(r.player_id)
+      r.player_id !== fieldGrossWinner?.player_id
     );
-    let netPlaceIdx = 0;
-    let netGroupStart = 0;
-    while (netGroupStart < netEligible.length && netPlaceIdx < flightNetPlaces.length) {
-      const currentScore = netEligible[netGroupStart].net_total;
-      let netGroupEnd = netGroupStart + 1;
-      while (netGroupEnd < netEligible.length &&
-             netEligible[netGroupEnd].net_total === currentScore) {
-        netGroupEnd++;
-      }
-      const tiedPlayers = netEligible.slice(netGroupStart, netGroupEnd);
-      const slotsConsumed = Math.min(tiedPlayers.length, flightNetPlaces.length - netPlaceIdx);
-      const combinedPrize = flightNetPlaces.slice(netPlaceIdx, netPlaceIdx + slotsConsumed)
-        .reduce((a, b) => a + b, 0);
-      const share = combinedPrize / tiedPlayers.length;
-      tiedPlayers.forEach(p => {
-        ensurePlayer(p);
-        flightPayoutsMap[p.player_id].net_payout = share;
-      });
-      netPlaceIdx += slotsConsumed;
-      netGroupStart = netGroupEnd;
-    }
-  });
-
-  // No double dipping in DISPLAY: remove each flight's gross winners from
-  // the net standings so the display shows the actual net payout recipients
-  // (the next eligible players) instead of gross winners with $0.
-  // Current flight (index 0): filter flightOwnNet
-  const currentFlightGrossWinners = flightGrossWinnersList[0];
-  if (currentFlightGrossWinners) {
-    for (let i = flightOwnNet.length - 1; i >= 0; i--) {
-      if (currentFlightGrossWinners.has(flightOwnNet[i].player_id)) flightOwnNet.splice(i, 1);
-    }
-  }
-  // Sibling flights: filter their results.net_results (used by all_flight_standings)
-  siblingPairs.forEach((s, idx) => {
-    const winners = flightGrossWinnersList[idx + 1];
-    if (winners && Array.isArray(s.results?.net_results)) {
-      s.results.net_results = s.results.net_results.filter(r => !winners.has(r.player_id));
-    }
+    const { grossPayouts, netPayouts } = applyConflictResolution(
+      {}, {}, grossEligible, netEligible, flightGrossPlaces, flightNetPlaces, descending
+    );
+    const nameMap = {};
+    [...grossEligible, ...netEligible].forEach(r => { if (r.player_id) nameMap[r.player_id] = r.name; });
+    Object.entries(grossPayouts).forEach(([pid, amount]) => {
+      ensurePlayer({ player_id: pid, name: nameMap[pid] || pid });
+      flightPayoutsMap[pid].gross_payout = amount;
+    });
+    Object.entries(netPayouts).forEach(([pid, amount]) => {
+      ensurePlayer({ player_id: pid, name: nameMap[pid] || pid });
+      flightPayoutsMap[pid].net_payout = amount;
+    });
   });
 
   // 5. Add field prizes
@@ -647,6 +876,42 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
       field_net_payout: fieldN,
     };
   });
+
+  // 6. Multi-flight (non-hybrid) only: KP is a tournament-wide contest, not
+  // per-flight. Pool all flights' KP pots, divide equally across every par-3,
+  // and pay each par-3's recorded winner the same per-hole amount. Hybrid
+  // tournaments settle KP per-day per-flight and are left unchanged.
+  const isNonHybridMultiFlight = !!(finalRound.is_multi_flight && !finalRound.is_multi_day);
+  let tournamentKP = null;
+  let playerFlightMap = null;
+  if (isNonHybridMultiFlight) {
+    // Map each player to their flight number (string) so the tournament-level
+    // results page can split the combined payouts table per flight.
+    playerFlightMap = {};
+    [finalRound, ...siblingPairs.map(s => s.round)].forEach(r => {
+      const fn = String(r?.flight_number || 1);
+      (r?.players || []).forEach(p => { if (p.player_id) playerFlightMap[p.player_id] = fn; });
+    });
+    tournamentKP = computeTournamentWideKPs(finalRound, finalResults, siblingPairs);
+    // Attach player names to each KP result so the KP Winners card can render
+    // winners from OTHER flights (the final flight's roster doesn't include them).
+    const kpNameMap = {};
+    [finalRound, ...siblingPairs.map(s => s.round)].forEach(r => {
+      (r?.players || []).forEach(p => { if (p.player_id && p.name) kpNameMap[p.player_id] = p.name; });
+    });
+    tournamentKP.kpResults = tournamentKP.kpResults.map(kp => ({
+      ...kp,
+      name: kp.name || kpNameMap[kp.player_id] || kp.player_id,
+    }));
+    combinedPayouts.forEach(p => {
+      p.kp_payout = tournamentKP.kpPayouts[p.player_id] || 0;
+    });
+    // Team side games: pool each team's KP winnings and split equally among members.
+    splitTeamKpPayoutsAcrossRounds(
+      [finalRound, ...siblingPairs.map(s => s.round)],
+      combinedPayouts
+    );
+  }
 
   // Scaled pot values for display (total across all flights)
   const scaledGrossPot = flightGrossPotTotal;
@@ -680,6 +945,12 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     net_results: fieldNet,
     flight_own_gross: flightOwnGross,
     flight_own_net: flightOwnNet,
+    // Preserve this flight's OWN side-game pots (before combining) so the
+    // current day's side games section shows this flight's pot, not the
+    // tournament-wide total that overwrites gross_skins_allocated_pot below.
+    flight_own_gross_skins_pot: finalResults.gross_skins_allocated_pot || finalResults.gross_skins_separate_pot || 0,
+    flight_own_net_skins_pot: finalResults.net_skins_allocated_pot || finalResults.net_skins_separate_pot || 0,
+    flight_own_deuce_pot: finalResults.deuce_pot || 0,
     is_series_cumulative: true,
     is_flight_cumulative: true,
     series_flights: 1 + siblingPairs.length,
@@ -687,6 +958,24 @@ export function computeFlightSeriesResults(finalRound, finalResults, siblingPair
     field_net_winner: fieldNetWinner,
     field_gross_prize: fieldGrossPrize,
     field_net_prize: fieldNetPrize,
+    // Tournament-wide KP (non-hybrid multi-flight): override the per-flight KP
+    // fields with the pooled, per-hole values so the KP Winners section, pot
+    // breakdown, and payout table all reflect one tournament-wide KP contest.
+    ...(isNonHybridMultiFlight && tournamentKP ? {
+      kp_results: tournamentKP.kpResults,
+      kp_per_entry_amount: tournamentKP.perKpAmount,
+      kp_separate_pot: tournamentKP.totalKpPot,
+    } : {}),
+    ...(isNonHybridMultiFlight && playerFlightMap ? {
+      player_flight_map: playerFlightMap,
+    } : {}),
+    // Aggregate side-game pots across all flights for the pot breakdown grid.
+    gross_skins_separate_pot: allFlightResults.reduce((s, r) => s + (r?.gross_skins_separate_pot || 0), 0),
+    net_skins_separate_pot: allFlightResults.reduce((s, r) => s + (r?.net_skins_separate_pot || 0), 0),
+    gross_skins_allocated_pot: allFlightResults.reduce((s, r) => s + (r?.gross_skins_allocated_pot || 0), 0),
+    net_skins_allocated_pot: allFlightResults.reduce((s, r) => s + (r?.net_skins_allocated_pot || 0), 0),
+    deuce_pot: allFlightResults.reduce((s, r) => s + (r?.deuce_pot || 0), 0),
+    side_pot: allFlightResults.reduce((s, r) => s + (r?.side_pot || 0), 0),
     payouts: combinedPayouts,
   };
 }

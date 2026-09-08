@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pencil, ChevronDown, ChevronRight, Users } from "lucide-react";
 import ScoreEditModal from "@/components/results/ScoreEditModal";
 import { computeTeamHandicap } from "@/lib/teamHandicap";
+import { isVegasFormat, vegasHoleScore, netHandicapScale, scaleHandicap } from "@/lib/vegasFormat";
 
 const countValid = arr => arr ? arr.filter(s => s !== '' && s !== null && s !== undefined && s !== 0).length : 0;
 
@@ -133,6 +134,7 @@ export default function TeamScoreSummary({ round, liveScores, onScoresChange, on
   const is666 = round.game_type === "team_6_6_6";
   const isAggregate = round.game_type === "team_aggregate" || (round.team_mode === true && round.team_format === "aggregate");
   const isTeamRowFormat = isScramble || isChapman || is666;
+  const isVegas = isVegasFormat(round);
   const roundId = roundIdProp || round?.id || new URLSearchParams(window.location.search).get("id");
 
   const [committedScores, setCommittedScores] = useState({});
@@ -224,6 +226,15 @@ export default function TeamScoreSummary({ round, liveScores, onScoresChange, on
   const back = holes.slice(9, 18);
   const cellBase = "text-center text-xs font-semibold min-w-[28px] w-[28px] py-1.5";
 
+  // A player's signed handicap for this round — Course Handicap (or index), with
+  // the Las Vegas allowance applied when the round is a Vegas format.
+  const playerHcpForRound = (player) => {
+    const raw = player.course_handicap != null
+      ? Number(player.course_handicap)
+      : (player.is_plus_handicap ? -Math.abs(player.handicap ?? 0) : Math.abs(player.handicap ?? 0));
+    return scaleHandicap(raw, netHandicapScale(round)) ?? 0;
+  };
+
   const strokesOnHole = (player, holeIdx) => {
     const teeName = player.tee_preference;
     const teeSet = teeName && round.course_tee_sets?.find(t => t.name === teeName);
@@ -231,9 +242,11 @@ export default function TeamScoreSummary({ round, liveScores, onScoresChange, on
     if (!hhi || hhi.length === 0) return 0;
     const holeHI = Number(hhi[holeIdx]);
     if (!holeHI || isNaN(holeHI)) return 0;
-    const isPlus = !!player.is_plus_handicap || (player.course_handicap != null && Number(player.course_handicap) < 0);
-    const absHcp = player.course_handicap != null ? Math.abs(Number(player.course_handicap)) : Math.abs(player.handicap ?? 0);
-    const flooredHcp = Math.floor(absHcp);
+    // Vegas: dots use the same round-wide allowance as the 1G / 2N row so the
+    // per-player nets shown here always add up to the team total.
+    const signedHcp = playerHcpForRound(player);
+    const isPlus = signedHcp < 0;
+    const flooredHcp = Math.floor(Math.abs(signedHcp));
     if (isPlus) return holeHI > (18 - flooredHcp) ? -1 : 0;
     const fullPasses = Math.floor(flooredHcp / 18);
     const remainder = flooredHcp % 18;
@@ -248,7 +261,7 @@ export default function TeamScoreSummary({ round, liveScores, onScoresChange, on
     const f9 = sumNine(scores.slice(0, 9));
     const b9 = sumNine(scores.slice(9, 18));
     const total = (f9 === null || b9 === null) ? null : f9 + b9;
-    const ch = player.course_handicap ?? (player.is_plus_handicap ? -(player.handicap ?? 0) : (player.handicap ?? 0));
+    const ch = playerHcpForRound(player);
     const netTotal = total != null ? total - ch : null;
 
     return (
@@ -370,6 +383,44 @@ export default function TeamScoreSummary({ round, liveScores, onScoresChange, on
         </>
       );
     };
+
+    // Las Vegas: one combined row per hole (1 gross + 2 net, optimized), with the
+    // gross-ball player's initials underneath so the host can see what counted.
+    if (isVegas) {
+      const withScores = team.members.map(p => ({ ...p, scores: committedScores?.[p.player_id] || [] }));
+      const detail = Array.from({ length: 18 }, (_, i) => vegasHoleScore(withScores, i, hcpIndexes, netHandicapScale(round)));
+      const vArr = detail.map(d => (d ? d.total : null));
+      const initialsFor = (d) => {
+        if (!d) return '';
+        const m = team.members.find(p => p.player_id === d.gross_player_id);
+        return m ? (m.name || '').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() : '';
+      };
+      const vOut = sumHoles(vArr.slice(0, 9));
+      const vIn = sumHoles(vArr.slice(9, 18));
+      const vTot = (vOut != null && vIn != null) ? vOut + vIn : (vOut ?? vIn ?? null);
+      const cellStyle = { backgroundColor: '#dcf4dc', color: '#1a3d1a' };
+      const vCell = (i, borderClass) => (
+        <td key={i} className={`${cellBase} ${borderClass}`} style={cellStyle}>
+          <div className="flex flex-col items-center gap-0">
+            <span className="inline-flex items-center justify-center w-6 h-6">{vArr[i] != null ? vArr[i] : ''}</span>
+            <span className="text-[8px] leading-none opacity-70">{initialsFor(detail[i])}</span>
+          </div>
+        </td>
+      );
+      return (
+        <tr className="border-b border-border">
+          <td className="px-3 py-2 font-bold text-sm" style={cellStyle}>
+            <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> 1G / 2N</span>
+          </td>
+          {Array.from({ length: 9 }, (_, i) => vCell(i, 'border-l border-border/30'))}
+          <td className={`${cellBase} border-l border-border font-bold`} style={cellStyle}>{vOut != null ? vOut : '—'}</td>
+          {Array.from({ length: 9 }, (_, i) => vCell(i + 9, 'border-l border-border/30'))}
+          <td className={`${cellBase} border-l border-border font-bold`} style={cellStyle}>{vIn != null ? vIn : '—'}</td>
+          <td className={`${cellBase} border-l border-border font-bold`} style={cellStyle}>{vTot != null ? vTot : '—'}</td>
+          <td className={`${cellBase} border-l border-border font-bold`} style={cellStyle}></td>
+        </tr>
+      );
+    }
 
     return (
       <>

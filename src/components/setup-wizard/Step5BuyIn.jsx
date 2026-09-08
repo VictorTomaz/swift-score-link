@@ -3,11 +3,11 @@ import { base44 } from '@/api/base44Client';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { CalendarDays, Plus, Link2, Loader2, Layers } from 'lucide-react';
+import { CalendarDays, Plus, Link2, Loader2, Layers, DollarSign } from 'lucide-react';
 import InfoTooltip from '@/components/InfoTooltip';
 import { toast } from 'sonner';
 
-export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAddDay }) {
+export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAddDay, parentRound }) {
   const isOff = form.game_mode === 'OFF';
   const isCustom = form.game_mode === 'CUSTOM';
   const isMultiDay = !!(form.is_multi_day || form.is_multi_flight);
@@ -15,11 +15,27 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
   const quickOptions = isOff ? [0, 5, 10, 20, 50] : [5, 10, 11, 20, 50];
   const [customInput, setCustomInput] = useState('');
   const inputRef = useRef(null);
+  const [showAddedMoney, setShowAddedMoney] = useState(
+    Number(form.added_money) > 0 || (form.added_money_label || '').trim() !== ''
+  );
 
   // "new" = this round is the parent (Day 1); "add" = child linking to an existing parent
   const [attachMode, setAttachMode] = useState(isChild ? 'add' : 'new');
   const [parentOptions, setParentOptions] = useState([]);
   const [loadingParents, setLoadingParents] = useState(false);
+  // True when the parent (open) flight already has added money set — child
+  // flights must not add their own, since added money lives on the parent and
+  // splits across flights proportionally by player count.
+  const [parentHasAddedMoney, setParentHasAddedMoney] = useState(false);
+
+  // Add Flight URL flow: the parent is loaded by SetupWizard and passed in
+  // directly (chooseParent is never called). Sync the flag from the prop so
+  // the added-money button hides on child flights whose parent already has it.
+  useEffect(() => {
+    if (parentRound && form.parent_round_id === parentRound.id) {
+      setParentHasAddedMoney(Number(parentRound.added_money) > 0);
+    }
+  }, [parentRound, form.parent_round_id]);
 
   // Hybrid flight selection: when the parent tournament has both multi-day
   // and multi-flight enabled, the user must choose whether this round is a
@@ -55,16 +71,23 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
     return () => { cancelled = true; };
   }, [isMultiDay, attachMode, form.series_type, form.is_multi_flight]);
 
+  // Team events can't award field prizes (they rank individual players) —
+  // clear the flag if it was set before the format was switched to teams.
+  useEffect(() => {
+    const isTeam = !!(form.team_mode || (form.game_type && form.game_type !== 'individual'));
+    if (isTeam && form.field_prizes_enabled) {
+      updateForm({ field_prizes_enabled: false });
+    }
+  }, [form.team_mode, form.game_type, form.field_prizes_enabled]);
+
   const handleSelect = (amount) => {
     updateForm({ buy_in: amount });
-    setTimeout(nextStep, 300);
   };
 
   const handleCustom = () => {
     const val = Number(customInput);
     if (customInput !== '' && !isNaN(val) && val >= 0) {
       updateForm({ buy_in: val });
-      nextStep();
     }
   };
 
@@ -86,18 +109,22 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
 
   const toggleMultiFlight = (checked) => {
     if (checked) {
+      // This is the parent (Flight 1) — default its flight name so the
+      // dashboard/results show "Flight 1" instead of the generic fallback.
+      // The user can rename it later from the edit wizard if desired.
+      const flightNameUpdates = !form.flight_name ? { flight_name: 'Flight 1', flight_number: 1 } : {};
       if (form.game_mode === 'SWIFT_SCORE_11') {
-        updateForm({ is_multi_flight: true, series_type: 'multi_flight', parent_round_id: null, game_mode: 'CUSTOM', custom_place_payout_percent: 100, custom_games_percent: 0 });
+        updateForm({ is_multi_flight: true, series_type: 'multi_flight', parent_round_id: null, game_mode: 'CUSTOM', custom_place_payout_percent: 100, custom_games_percent: 0, ...flightNameUpdates });
         toast.info('Switched to Custom Payouts — Fixed Payouts aren\'t available for multi-flight tournaments.');
       } else {
-        updateForm({ is_multi_flight: true, series_type: 'multi_flight', parent_round_id: null, custom_place_payout_percent: 100, custom_games_percent: 0 });
+        updateForm({ is_multi_flight: true, series_type: 'multi_flight', parent_round_id: null, custom_place_payout_percent: 100, custom_games_percent: 0, ...flightNameUpdates });
       }
       setAttachMode('new');
     } else {
       // Keep multi-day as-is — the toggles are independent. If multi-day was
       // also on, it stays on. If only multi-flight was on (which set
       // is_multi_day=true), the user can turn off multi-day separately.
-      updateForm({ is_multi_flight: false, series_type: 'multi_day', parent_round_id: null });
+      updateForm({ is_multi_flight: false, series_type: 'multi_day', parent_round_id: null, flight_name: '', flight_number: 1 });
       setAttachMode('new');
     }
   };
@@ -131,6 +158,7 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
           // Hybrid: fetch children to determine existing flights. The user
           // will choose "New Flight" or "Add Day to Flight X" next.
           setParentIsHybrid(true);
+          setParentHasAddedMoney(Number(p.added_money) > 0);
           const children = await base44.entities.Round.filter({ parent_round_id: parentId }, '-created_date', 200);
           const allRounds = [p, ...(children || [])].filter(Boolean);
           const flightMap = {};
@@ -166,6 +194,7 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
           // Non-hybrid: existing behavior
           setParentIsHybrid(false);
           setHybridFlights([]);
+          setParentHasAddedMoney(Number(p.added_money) > 0);
           updateForm({
             parent_round_id: parentId,
             buy_in: isFlight ? (p.buy_in ?? 0) : 0,
@@ -205,6 +234,7 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
   };
 
   const isFlight = !!form.is_multi_flight;
+  const isTeamEvent = !!(form.team_mode || (form.game_type && form.game_type !== 'individual'));
   const seriesLabel = isFlight ? 'Flight' : 'Day';
   const title = isAddDay
     ? `Add a Day to Flight ${form.flight_number || 1}`
@@ -315,8 +345,35 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
         </div>
       )}
 
+      {/* Flight 1 name — the parent flight never passes through the flight
+          naming step (multi-flight is enabled here, after the name step),
+          so let the user rename it inline. */}
+      {isFlight && !isChild && attachMode === 'new' && (
+        <div className="rounded-xl border-2 border-border bg-card p-4 space-y-2">
+          <p className="text-sm font-semibold text-foreground">Flight 1 Name</p>
+          <Input
+            type="text"
+            placeholder="Flight 1"
+            value={form.flight_name || ''}
+            onChange={e => updateForm({ flight_name: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">Optional — e.g. Championship Flight. Defaults to "Flight 1".</p>
+        </div>
+      )}
+
+      {/* Field prizes rank individual players across flights — not available
+          in a team event, where standings are per-team. */}
+      {isFlight && !isChild && isTeamEvent && (
+        <div className="rounded-xl border-2 border-dashed border-border bg-muted/30 p-4">
+          <p className="text-sm font-semibold text-foreground">Field Prizes Unavailable</p>
+          <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
+            Low Gross / Low Net of the Field rank individual players across all flights, so they can't be used in a team event. Each flight pays its own team gross/net.
+          </p>
+        </div>
+      )}
+
       {/* Field Prizes — shown when multi-flight is enabled on the parent round */}
-      {isFlight && !isChild && (
+      {isFlight && !isChild && !isTeamEvent && (
         <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
@@ -558,12 +615,88 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
             </div>
           </div>
 
+          {/* Added Money / Sponsorship — hidden behind a toggle so it stays
+              out of the way for standard rounds. Auto-expands if a value was
+              already set (e.g. editing an existing round). */}
+          {(() => {
+            const hasAddedMoney = Number(form.added_money) > 0 || (form.added_money_label || '').trim() !== '';
+            // Child flight whose parent already has added money: the pot is
+            // set on the open flight and splits across flights, so this flight
+            // can't add its own. Show a note instead of the add button.
+            if (isChild && isFlight && parentHasAddedMoney && !hasAddedMoney) {
+              return (
+                <div className="rounded-xl border-2 border-dashed border-muted bg-muted/30 p-3 text-center">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <span className="font-semibold text-foreground">Added money already set</span> on the open flight — it splits across all flights automatically.
+                  </p>
+                </div>
+              );
+            }
+            if (!showAddedMoney) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setShowAddedMoney(true)}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-dashed border-accent bg-accent/10 text-sm font-semibold text-accent hover:bg-accent/20 transition-colors"
+                >
+                  <DollarSign className="w-4 h-4" />
+                  Add Sponsorship / Added Money
+                </button>
+              );
+            }
+            return (
+              <div className="rounded-xl border-2 border-accent/30 bg-accent/5 p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-accent" />
+                    <p className="text-sm font-semibold text-foreground">Added Money</p>
+                    <InfoTooltip text="A lump sum (sponsorship, added purse, etc.) folded into the main gross/net pot alongside player buy-ins. Goes to final gross/net payouts only — not side games. For multi-flight tournaments, this splits across flights proportionally by player count." />
+                  </div>
+                  {!hasAddedMoney && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowAddedMoney(false); updateForm({ added_money: 0, added_money_label: '' }); }}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={form.added_money || ''}
+                    onChange={e => updateForm({ added_money: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    className="flex-1 h-11 text-lg font-semibold border-2 border-border focus:border-accent"
+                  />
+                  <Input
+                    type="text"
+                    placeholder="Label (optional)"
+                    value={form.added_money_label || ''}
+                    onChange={e => updateForm({ added_money_label: e.target.value })}
+                    className="flex-1 h-11 text-sm border-2 border-border focus:border-accent"
+                  />
+                </div>
+                {Number(form.added_money) > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {form.added_money_label ? form.added_money_label : 'Added money'} folds into the gross/net purse — payouts scale up automatically.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
           {isMultiDay && attachMode === 'new' && (
             <div className="rounded-lg bg-primary/5 border border-primary/20 p-3">
               <p className="text-xs text-muted-foreground leading-relaxed">
-                <span className="font-semibold text-foreground">Note:</span> The {isFlight ? 'tournament' : 'series'} buy-in feeds the
-                main tournament purse, settled after the final {seriesLabel.toLowerCase()}. Skins, KPs, and deuce pots are
-                configured and paid out {seriesLabel.toLowerCase()}-by-{seriesLabel.toLowerCase()} in the Side Games step.
+                <span className="font-semibold text-foreground">Note:</span> This is the
+                <span className="font-semibold text-foreground"> total</span> entry fee per player for the
+                entire {isFlight ? 'tournament' : 'series'} — it feeds the main purse, paid out only after
+                the final {seriesLabel.toLowerCase()}. Added money also goes here, not to side games. Skins,
+                KPs, and deuce pots are separate <span className="font-semibold text-foreground">per-day</span>
+                buy-ins configured in the Side Games step — they settle {seriesLabel.toLowerCase()}-by-{seriesLabel.toLowerCase()}.
               </p>
             </div>
           )}
@@ -574,11 +707,14 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
         <button type="button" onClick={prevStep} className="flex-1 py-2 px-4 rounded-md border-2 border-border bg-card text-foreground font-medium text-sm">
           Back
         </button>
-        {isChild && (
-          <button type="button" onClick={nextStep} className="flex-1 py-2 px-4 rounded-md bg-primary text-primary-foreground font-semibold text-sm">
-            Next
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={nextStep}
+          disabled={!isChild && (form.buy_in == null || form.buy_in === '')}
+          className="flex-1 py-2 px-4 rounded-md bg-primary text-primary-foreground font-semibold text-sm disabled:opacity-50"
+        >
+          {isChild ? 'Next' : 'Continue'}
+        </button>
       </div>
     </div>
   );

@@ -85,8 +85,10 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
       {isMultiDay && (
         <div className="rounded-lg bg-primary/5 border border-primary/20 p-3">
           <p className="text-xs text-muted-foreground leading-relaxed">
-            <span className="font-semibold text-foreground">Multi-Day Series:</span> The main purse is held
-            until the final round, so side games must use a separate buy-in to settle day-by-day.
+            <span className="font-semibold text-foreground">Multi-Day Series:</span> The main tournament
+            entry fee is held until the final round for gross/net payouts. Side game buy-ins below are
+            <span className="font-semibold text-foreground"> per day</span> — each day's skins, KPs, and
+            deuces settle independently. Added money goes to the final purse only, not side games.
           </p>
         </div>
       )}
@@ -148,7 +150,7 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
               </div>
               {form.kp_separate_buy_in && form.kp_mode === 'separate' && (
                 <div className="flex items-center justify-between pt-2 border-t">
-                  <Label className="text-sm">KP Buy-In ($)</Label>
+                  <Label className="text-sm">KP Buy-In ($/day)</Label>
                   <BuyInInput value={form.kp_buy_in} onChange={v => updateForm({ kp_buy_in: v })} />
                 </div>
               )}
@@ -297,7 +299,7 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
           )}
           {!isOff && form.kp_separate_buy_in && form.kp_mode === 'separate' && (
             <div className="flex items-center justify-between pt-2 border-t">
-              <Label className="text-sm">KP Buy-In ($)</Label>
+              <Label className="text-sm">KP Buy-In ($/day)</Label>
               <BuyInInput value={form.kp_buy_in} onChange={v => updateForm({ kp_buy_in: v })} />
             </div>
           )}
@@ -341,7 +343,7 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
 
           {form.gross_skins_enabled && !isFixed && form.gross_skins_separate_buy_in && (
             <div className="flex items-center justify-between pl-4">
-              <Label className="text-xs text-muted-foreground">Buy-In ($)</Label>
+              <Label className="text-xs text-muted-foreground">Buy-In ($/day)</Label>
               <BuyInInput value={form.gross_skins_buy_in} onChange={v => updateForm({ gross_skins_buy_in: v })} />
             </div>
           )}
@@ -382,7 +384,7 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
 
           {form.net_skins_enabled && !isFixed && form.net_skins_separate_buy_in && (
             <div className="flex items-center justify-between pl-4">
-              <Label className="text-xs text-muted-foreground">Buy-In ($)</Label>
+              <Label className="text-xs text-muted-foreground">Buy-In ($/day)</Label>
               <BuyInInput value={form.net_skins_buy_in} onChange={v => updateForm({ net_skins_buy_in: v })} />
             </div>
           )}
@@ -419,7 +421,7 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
 
           {form.deuce_pot_enabled && (
             <div className="flex items-center justify-between pt-2 border-t">
-              <Label className="text-sm">Deuce Buy-In ($)</Label>
+              <Label className="text-sm">Deuce Buy-In ($/day)</Label>
               <BuyInInput value={form.deuce_buy_in} onChange={v => updateForm({ deuce_buy_in: v })} />
             </div>
           )}

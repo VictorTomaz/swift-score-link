@@ -7,7 +7,8 @@ import { usePullToRefresh } from "@/hooks/usePullToRefresh";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { PlusCircle, Trophy, Target, Users, DollarSign, ChevronRight, Calendar, Copy, Edit, FileText, CalendarClock, Settings, Mail, Printer } from "lucide-react";
+import { PlusCircle, Trophy, Target, Users, DollarSign, ChevronRight, Calendar, Copy, Edit, FileText, CalendarClock, Settings, Mail, Printer, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
@@ -25,6 +26,7 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [editingRound, setEditingRound] = useState(null);
   const [duplicating, setDuplicating] = useState(null);
+  const [deletingRound, setDeletingRound] = useState(null);
   const { hasCompletedTour, startTour } = useTour();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -106,6 +108,27 @@ export default function Dashboard() {
     );
   };
 
+  const handleDeleteRound = async () => {
+    if (!deletingRound) return;
+    const roundId = deletingRound.id;
+    try {
+      // Delete associated RoundScore records first
+      const scoreRecords = await base44.entities.RoundScore.filter({ round_id: roundId });
+      if (scoreRecords.length > 0) {
+        await base44.entities.RoundScore.deleteMany({ round_id: roundId });
+      }
+      await base44.entities.Round.delete(roundId);
+      queryClient.setQueryData(["rounds", user?.email], (old = []) =>
+        old.filter(r => r.id !== roundId)
+      );
+      toast.success("Flight deleted");
+    } catch (err) {
+      toast.error("Failed to delete flight: " + (err.message || "Unknown error"));
+    } finally {
+      setDeletingRound(null);
+    }
+  };
+
   const stats = [
     { label: "Rounds Played", value: completedRounds.length, icon: Trophy, color: "text-primary" },
     { label: "Active Rounds", value: activeRounds.length, icon: Target, color: "text-accent" },
@@ -171,7 +194,8 @@ export default function Dashboard() {
           <h2 className="text-base font-semibold text-foreground">Active Rounds</h2>
           <div className="grid gap-2">
             {activeGroups.map(group => {
-              if (group.length > 1) return <TournamentGroupCard key={group[0].parent_round_id || group[0].id} group={group} isCompleted={false} onEdit={setEditingRound} />;
+              const isSeriesParent = group.length === 1 && !group[0].parent_round_id && (group[0].is_multi_flight || group[0].is_multi_day);
+              if (group.length > 1 || isSeriesParent) return <TournamentGroupCard key={group[0].parent_round_id || group[0].id} group={group} isCompleted={false} onEdit={setEditingRound} onDelete={setDeletingRound} />;
               const round = group[0];
               return (
               <Link key={round.id} to={`/Scorecard?id=${round.id}`}>
@@ -250,7 +274,8 @@ export default function Dashboard() {
         ) : (
           <div className="grid gap-2">
             {completedGroups.slice(0, 5).map(group => {
-              if (group.length > 1) return <TournamentGroupCard key={group[0].parent_round_id || group[0].id} group={group} isCompleted={true} onEdit={setEditingRound} />;
+              const isSeriesParent = group.length === 1 && !group[0].parent_round_id && (group[0].is_multi_flight || group[0].is_multi_day);
+              if (group.length > 1 || isSeriesParent) return <TournamentGroupCard key={group[0].parent_round_id || group[0].id} group={group} isCompleted={true} onEdit={setEditingRound} onDelete={setDeletingRound} />;
               const round = group[0];
               return (
               <Link key={round.id} to={`/Results?id=${round.id}`}>
@@ -298,6 +323,31 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      {/* Delete Round Confirmation */}
+      <AlertDialog open={!!deletingRound} onOpenChange={(open) => !open && setDeletingRound(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this flight?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingRound && `Flight ${deletingRound.flight_number || 1} — ${deletingRound.event_name}`}
+              <br /><br />
+              This permanently deletes the round, its scores, and all side game data. This cannot be undone.
+              {deletingRound && !deletingRound.parent_round_id && deletingRound.is_multi_flight && (
+                <span className="block mt-2 text-destructive font-medium">
+                  ⚠️ This is the parent (Flight 1) round. Deleting it may affect linked flights. Consider deleting child flights instead.
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteRound} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              <Trash2 className="w-4 h-4 mr-1" />
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -52,7 +52,7 @@ export default function DraggableTeamGroups({ previewPlayers, groupTags, teamOrd
   };
 
   const PlayerChip = ({ p, index }) => (
-    <Draggable draggableId={p.player_id} index={index}>
+    <Draggable draggableId={`team-player-${p.player_id}`} index={index}>
       {(provided, snapshot) => (
         <div
           ref={provided.innerRef}

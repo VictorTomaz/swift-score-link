@@ -3,8 +3,23 @@ import { Badge } from "@/components/ui/badge";
 import { Trophy, Award, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { computeTeamStandingsDisplay, rankLabel } from "@/lib/standingsRanks";
+import VegasStandings from "@/components/results/VegasStandings";
 
-export default function TeamStandings({ results, round, players, onEditScore, editMode, holdMainPayouts }) {
+export default function TeamStandings({ results, round, players, onEditScore, editMode, holdMainPayouts, forceStacked }) {
+  // Las Vegas (1 gross / 2 net) is a single combined leaderboard, not gross+net.
+  if ((results?.team_vegas_results || []).length > 0) {
+    return (
+      <VegasStandings
+        results={results}
+        round={round}
+        players={players}
+        onEditScore={onEditScore}
+        editMode={editMode}
+        holdMainPayouts={holdMainPayouts}
+      />
+    );
+  }
+
   const teamGrossResults = results.team_gross_results || [];
   const teamNetResults = results.team_net_results || [];
   const { grossDisplay, netDisplay } = computeTeamStandingsDisplay(teamGrossResults, teamNetResults);
@@ -62,7 +77,7 @@ export default function TeamStandings({ results, round, players, onEditScore, ed
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className={forceStacked ? "grid grid-cols-1 gap-4" : "grid grid-cols-1 md:grid-cols-2 gap-4"}>
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">

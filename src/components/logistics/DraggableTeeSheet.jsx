@@ -1,6 +1,6 @@
 import React from "react";
 import { Droppable, Draggable } from "@hello-pangea/dnd";
-import { Check, UserPlus, GripVertical } from "lucide-react";
+import { Check, UserPlus, GripVertical, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 /**
@@ -62,7 +62,7 @@ export default function DraggableTeeSheet({
   onTagChange,
 }) {
   const renderPlayerChip = (p, index) => (
-    <Draggable key={p.player_id} draggableId={p.player_id} index={index}>
+    <Draggable key={p.player_id} draggableId={`tee-player-${p.player_id}`} index={index}>
       {(provided, snapshot) => (
         <div
           ref={provided.innerRef}
@@ -81,6 +81,33 @@ export default function DraggableTeeSheet({
         >
           <span>{p.name}</span>
           <TagInput playerId={p.player_id} value={groupTags[p.player_id]} onChange={onTagChange} />
+        </div>
+      )}
+    </Draggable>
+  );
+
+  const renderSlotHandle = (time, index, count) => (
+    <Draggable key={`slot-handle-${time}`} draggableId={`tee-group-${time}_*`} index={index}>
+      {(provided, snapshot) => (
+        <div
+          ref={provided.innerRef}
+          {...provided.draggableProps}
+          {...provided.dragHandleProps}
+          style={{
+            ...provided.draggableProps.style,
+            ...provided.dragHandleProps.style,
+            touchAction: 'none',
+          }}
+          className={`flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-bold cursor-grab active:cursor-grabbing select-none ${
+            snapshot.isDragging
+              ? "bg-primary text-primary-foreground shadow-lg z-50"
+              : "bg-logistics/15 text-logistics"
+          }`}
+          title={`Drag all ${count} player${count === 1 ? '' : 's'} from ${time} to another tee time`}
+        >
+          <GripVertical className="w-3 h-3" />
+          <Users className="w-3 h-3" />
+          <span>{count}</span>
         </div>
       )}
     </Draggable>
@@ -136,9 +163,10 @@ export default function DraggableTeeSheet({
                       {slotPlayers.length}/{groupSize}
                     </div>
                   </div>
-                  {teamTags.length > 0 && (
+                  {slotPlayers.length > 0 && (
                     <div className="flex flex-wrap gap-1 items-center shrink-0">
-                      {teamTags.map((tag, ti) => renderTeamBadge(tag, ti, time))}
+                      {renderSlotHandle(time, 0, slotPlayers.length)}
+                      {teamTags.map((tag, ti) => renderTeamBadge(tag, ti + 1, time))}
                     </div>
                   )}
                   {groupProvided.placeholder}
@@ -195,7 +223,7 @@ export default function DraggableTeeSheet({
                       <p className="text-xs text-muted-foreground italic">Drop a player or team here to unassign</p>
                     ) : (
                       unassignedPlayers.map((p, i) => (
-                        <Draggable key={p.player_id} draggableId={p.player_id} index={i}>
+                        <Draggable key={p.player_id} draggableId={`tee-player-${p.player_id}`} index={i}>
                           {(provided, snapshot) => (
                             <div
                               ref={provided.innerRef}

@@ -6,8 +6,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export default function EditRoundModal({ round, onClose, onSave }) {
+  const isMultiFlight = !!(round.is_multi_flight || round.series_type === 'multi_flight');
   const [formData, setFormData] = useState({
     event_name: round.event_name || '',
+    flight_name: round.flight_name || (isMultiFlight ? `Flight ${round.flight_number || 1}` : ''),
     date: round.date || new Date().toISOString().split('T')[0],
     course_name: round.course_name || '',
     tee_set: round.tee_set || '',
@@ -46,6 +48,17 @@ export default function EditRoundModal({ round, onClose, onSave }) {
               placeholder="e.g. Saturday Scramble"
             />
           </div>
+          {isMultiFlight && (
+            <div className="space-y-2">
+              <Label htmlFor="flight_name">Flight Name</Label>
+              <Input
+                id="flight_name"
+                value={formData.flight_name}
+                onChange={(e) => handleChange('flight_name', e.target.value)}
+                placeholder={`Flight ${round.flight_number || 1}`}
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="date">Date</Label>
             <Input

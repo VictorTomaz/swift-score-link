@@ -49,7 +49,10 @@ export function useSeriesRounds(round) {
       return [round];
     },
     enabled: !!(round?.is_multi_day || round?.is_multi_flight) && !!anchorId,
-    staleTime: 5 * 60 * 1000,
+    // staleTime: 0 so the series data is always refetched on mount — when a new
+    // day/flight is added, the cached data (missing the new round) would make
+    // every flight look "complete" and suppress the gold "in progress" rings.
+    staleTime: 0,
     gcTime: 30 * 60 * 1000,
   });
 }
@@ -61,19 +64,24 @@ export function useSeriesRounds(round) {
  */
 export function isFinalFlightRound(round, seriesRounds) {
   if (!round?.is_multi_flight) return true;
-  // The is_final_flight flag is ONLY meaningful for hybrid (multi-day +
-  // multi-flight) tournaments. For multi-flight-only, the final flight is
-  // always auto-detected from flight_number — the flag defaults to false and
-  // must not short-circuit the detection.
-  const isHybrid = !!(round?.is_multi_day && round?.is_multi_flight);
-  if (isHybrid) {
-    if (round.is_final_flight === true) return true;
-    if (round.is_final_flight === false) return false;
-  }
+  const fn = round.flight_number || 1;
   const all = seriesRounds || [];
+  // Auto-detect by highest flight number — the last flight added is always
+  // the final flight. This eliminates the manual "Final Flight" toggle that
+  // was frequently set on the wrong flight (e.g. Flight 1 instead of Flight 3),
+  // which disabled the Final Day toggle on the actual last flight and blocked
+  // the organizer from finalizing the tournament or sending results.
   if (all.length === 0) return true;
+  // If the organizer explicitly declared a flight as the finale (by switching
+  // "final day" on from that flight's Results page), honor it — otherwise a
+  // tournament finalized from, say, Flight 1 would never pay out the combined
+  // purse because auto-detection only accepts the highest flight number.
+  const flagged = all.filter(r => r.is_final_flight === true);
+  if (flagged.length > 0) {
+    return flagged.some(r => (r.flight_number || 1) === fn);
+  }
   const maxFlight = Math.max(...all.map(r => r.flight_number || 1));
-  return (round.flight_number || 1) >= maxFlight;
+  return fn >= maxFlight;
 }
 
 /**
@@ -82,9 +90,23 @@ export function isFinalFlightRound(round, seriesRounds) {
  * check. For hybrid tournaments, use isSeriesFinalDay (requires both).
  */
 export function isFinalDayRaw(round, seriesRounds) {
-  if ((!round?.is_multi_day && !round?.is_multi_flight) || !round?.parent_round_id) return false;
+  if ((!round?.is_multi_day && !round?.is_multi_flight)) return false;
   if (round.is_series_final === true) return true;
   if (round.is_series_final === false) return false;
+  const isHybrid = !!(round?.is_multi_day && round?.is_multi_flight);
+  if (isHybrid) {
+    // Hybrid: the final day is the latest-dated round WITHIN this round's
+    // flight. The parent (Flight 1, Day 1) can be the final day of its
+    // flight if it's the only/latest day — so the organizer can finalize
+    // on any flight, including Flight 1.
+    const fn = round.flight_number || 1;
+    const flightRounds = (seriesRounds || []).filter(Boolean).filter(r => (r.flight_number || 1) === fn);
+    if (flightRounds.length === 0) return false;
+    const sorted = [...flightRounds].sort((a, b) => new Date(b.date) - new Date(a.date));
+    return sorted[0]?.id === round.id;
+  }
+  // Non-hybrid multi-day: the parent is Day 1, never the final day.
+  if (!round?.parent_round_id) return false;
   const children = (seriesRounds || []).filter(r => r.parent_round_id);
   if (children.length === 0) return false;
   const sorted = [...children].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -104,11 +126,33 @@ export function isFinalDayRaw(round, seriesRounds) {
  * is sufficient — there's only one "flight" of the same players.
  */
 export function isSeriesFinalDay(round, seriesRounds) {
-  if ((!round?.is_multi_day && !round?.is_multi_flight) || !round?.parent_round_id) return false;
+  if ((!round?.is_multi_day && !round?.is_multi_flight)) return false;
   const isHybrid = !!(round?.is_multi_day && round?.is_multi_flight);
   if (isHybrid) {
+    // Hybrid: the parent (Flight 1, Day 1) can be the final day of the
+    // series if Flight 1 is the final flight and it's the latest day in
+    // that flight. Don't exclude it just because it has no parent_round_id.
     if (!isFinalFlightRound(round, seriesRounds)) return false;
     return isFinalDayRaw(round, seriesRounds);
   }
+  // Non-hybrid: the parent is Day 1, never the final day.
+  if (!round?.parent_round_id) return false;
   return isFinalDayRaw(round, seriesRounds);
+}
+
+/**
+ * True when `round` is the final day of its FLIGHT — the latest-dated round
+ * within the same flight_number. For hybrid tournaments, a round can be the
+ * final day of its flight without being the final day of the series (which
+ * requires the final flight's final day). In that case, the flight's own
+ * gross/net payouts are computed so they're visible on this round's Results
+ * page, even though the overall tournament field standings are still held.
+ */
+export function isFinalDayOfFlight(round, seriesRounds) {
+  if ((!round?.is_multi_day && !round?.is_multi_flight) || !round?.parent_round_id) return false;
+  const fn = round.flight_number || 1;
+  const flightRounds = (seriesRounds || []).filter(Boolean).filter(r => (r.flight_number || 1) === fn);
+  if (flightRounds.length <= 1) return false;
+  const sorted = [...flightRounds].sort((a, b) => new Date(b.date) - new Date(a.date));
+  return sorted[0]?.id === round.id;
 }

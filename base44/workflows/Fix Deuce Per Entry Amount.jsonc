@@ -1,0 +1,37 @@
+{
+  "name": "Fix Deuce Per Entry Amount",
+  "description": "",
+  "trigger": {
+    "condition": "${ ((.trigger.data.deuce_pot_enabled == true) and (.trigger.data.game_mode == \"CUSTOM\") and (.trigger.changed_fields | index(\"results\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Round"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "fix_deuce_per_entry_amount",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "fixDeucePerEntry",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  },
+  "x-base44-migrated-from-automation": {
+    "legacy_payload_function": "fixDeucePerEntry"
+  }
+}

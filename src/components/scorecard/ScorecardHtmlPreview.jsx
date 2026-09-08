@@ -1,5 +1,6 @@
 import React from "react";
 import { computeTeamHandicap, handicapFormulaLabel } from "@/lib/teamHandicap";
+import { netHandicapScale, scaleHandicap } from "@/lib/vegasFormat";
 
 const LOGO_URL = "https://media.base44.com/images/public/69bb019558d96a11fbfbddce/189d00ac3_IMG_6860.jpg";
 
@@ -27,14 +28,14 @@ function holeStrokes(courseHandicap, holeHcpIndex) {
 /**
  * Find the best (lowest) score among team members for a given hole.
  */
-function bestBall(players, holeIndex, hcpIndexes, isNet) {
+function bestBall(players, holeIndex, hcpIndexes, isNet, hcpScale = 1) {
   const scores = [];
   for (const player of players) {
     if (!player) continue;
     const gross = Number(player.scores?.[holeIndex]);
     if (gross && gross > 0) {
       if (isNet) {
-        const strokes = holeStrokes(player.course_handicap || 0, hcpIndexes[holeIndex] || 0);
+        const strokes = holeStrokes(scaleHandicap(player.course_handicap || 0, hcpScale), hcpIndexes[holeIndex] || 0);
         scores.push(gross - strokes);
       } else {
         scores.push(gross);
@@ -47,7 +48,7 @@ function bestBall(players, holeIndex, hcpIndexes, isNet) {
 /**
  * Aggregate: sum of all members' valid scores on a hole (gross or net).
  */
-function aggregateBall(players, holeIndex, hcpIndexes, isNet) {
+function aggregateBall(players, holeIndex, hcpIndexes, isNet, hcpScale = 1) {
   let sum = 0;
   let has = false;
   for (const player of players) {
@@ -55,7 +56,7 @@ function aggregateBall(players, holeIndex, hcpIndexes, isNet) {
     const gross = Number(player.scores?.[holeIndex]);
     if (gross && gross > 0) {
       if (isNet) {
-        const strokes = holeStrokes(player.course_handicap || 0, hcpIndexes[holeIndex] || 0);
+        const strokes = holeStrokes(scaleHandicap(player.course_handicap || 0, hcpScale), hcpIndexes[holeIndex] || 0);
         sum += gross - strokes;
       } else {
         sum += gross;
@@ -69,10 +70,10 @@ function aggregateBall(players, holeIndex, hcpIndexes, isNet) {
 /**
  * Compute best-ball arrays and totals for a single team.
  */
-function computeTeamData(teamPlayers, hcpIndexes, useAggregate) {
+function computeTeamData(teamPlayers, hcpIndexes, useAggregate, hcpScale = 1) {
   const fn = useAggregate ? aggregateBall : bestBall;
-  const gross = Array.from({ length: 18 }, (_, i) => fn(teamPlayers, i, hcpIndexes, false));
-  const net = Array.from({ length: 18 }, (_, i) => fn(teamPlayers, i, hcpIndexes, true));
+  const gross = Array.from({ length: 18 }, (_, i) => fn(teamPlayers, i, hcpIndexes, false, hcpScale));
+  const net = Array.from({ length: 18 }, (_, i) => fn(teamPlayers, i, hcpIndexes, true, hcpScale));
 
   const grossOut = gross.slice(0, 9).filter(f).reduce(fsum, 0);
   const grossIn = gross.slice(9, 18).filter(f).reduce(fsum, 0);
@@ -91,7 +92,8 @@ function computeTeamData(teamPlayers, hcpIndexes, useAggregate) {
 
 function teamHcpDisplay(teamPlayers, formula) {
   const val = computeTeamHandicap(teamPlayers, formula);
-  return val != null ? String(val) : "";
+  if (val == null) return "";
+  return val < 0 ? `+${Math.abs(val)}` : String(val);
 }
 const f = (v) => v != null;
 const fsum = (a, b) => a + b;
@@ -101,12 +103,19 @@ export default function ScorecardHtmlPreview({ round, group }) {
   const hcpIndexes = round.hole_handicap_indexes || [];
   const players = group || [];
 
-  const isTeamMode = round.team_mode === true || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate'].includes(round.game_type);
+  const isTeamMode = round.team_mode === true || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_aggregate', 'team_las_vegas'].includes(round.game_type);
   const teamSize = isTeamMode ? round.team_size || 2 : 0;
-  const isScramble = isTeamMode && round.team_format === "scramble";
+  // Las Vegas needs every player's own gross score per hole (1 gross + 2 nets),
+  // so it always uses the individual-rows + Gross/Net layout — never the
+  // single-team-row scramble card, even if a stale team_format says scramble.
+  const isVegas = isTeamMode && (round.game_type === "team_las_vegas" || round.team_format === "las_vegas");
+  const isScramble = isTeamMode && !isVegas && round.team_format === "scramble";
   const is666 = isTeamMode && round.game_type === "team_6_6_6";
   const isChapman = isTeamMode && round.game_type === "team_chapman";
   const isAggregate = isTeamMode && (round.game_type === "team_aggregate" || round.team_format === "aggregate");
+  // One handicap allowance for the whole card: the dots a player writes are the
+  // same dots that feed the team Net row AND their individual net side games.
+  const hcpScale = netHandicapScale(round);
 
   const FORMAT_LABELS_666 = { chapman: 'Chapman', best_ball: 'Best Ball', scramble: 'Scramble', alternate_shot: 'Alt Shot', aggregate: 'Aggregate' };
   const seg666Source = (is666 && Array.isArray(round.segments_666) && round.segments_666.length === 3)
@@ -156,7 +165,7 @@ export default function ScorecardHtmlPreview({ round, group }) {
   const renderTeamRows = (teamPlayers, teamIdx) => {
     const padded = [...teamPlayers];
     while (padded.length < (isTeamMode ? teamSize : fixedRows)) padded.push(null);
-    const data = computeTeamData(teamPlayers, hcpIndexes, isAggregate);
+    const data = computeTeamData(teamPlayers, hcpIndexes, isAggregate, hcpScale);
     const teamHcp = isTeamMode ? teamHcpDisplay(teamPlayers, round.hcp_formula) : "";
 
     return (
@@ -165,8 +174,9 @@ export default function ScorecardHtmlPreview({ round, group }) {
         {!isScramble && !isChapman && !is666 && padded.map((player, idx) => {
           const playerName = player ? (player.name || "") : "";
           const ch = player?.course_handicap;
-          const hcpVal = ch != null ? Number(ch) : (player?.is_plus_handicap ? -Math.abs(player?.handicap || 0) : Math.abs(player?.handicap || 0));
-          const hcpDisplay = ch != null ? (ch < 0 ? `+${Math.abs(ch)}` : String(ch)) : "";
+          const rawHcp = ch != null ? Number(ch) : (player?.is_plus_handicap ? -Math.abs(player?.handicap || 0) : Math.abs(player?.handicap || 0));
+          const hcpVal = scaleHandicap(rawHcp, hcpScale);
+          const hcpDisplay = hcpVal != null && ch != null ? (hcpVal < 0 ? `+${Math.abs(hcpVal)}` : String(hcpVal)) : "";
           const initials = playerName ? playerName.trim().split(/\s+/).map(n => n[0]).join("").toUpperCase().substring(0, 2) : "";
 
           const renderDots = (holeIdx) => {

@@ -6,6 +6,8 @@
  */
 
 import { computeTeamHandicap } from "@/lib/teamHandicap";
+import { isPoolNone } from "@/lib/sideGamePools";
+import { isVegasFormat, vegasHoleScore, holeStrokes, netHandicapScale } from "@/lib/vegasFormat";
 
 // ─── HELPERS ────────────────────────────────────────────────
 
@@ -54,6 +56,9 @@ function teamNetSingleScore(members, holeIdx, hcpIndexes, teamHandicap) {
  * - Best ball: each player uses their own course handicap (standard).
  */
 function computeTeamNetPerHole(team, holeIdx, hcpIndexes, round) {
+  if (isVegasFormat(round)) {
+    return teamGrossPerHole(team.members, holeIdx, round, hcpIndexes);
+  }
   if (isAggregateFormat(round)) {
     return aggregateNet(team.members, holeIdx, hcpIndexes, round?.hcp_formula);
   }
@@ -75,26 +80,6 @@ function isValidScore(s) {
   if (typeof s === 'string' && s.trim().toUpperCase() === 'X') return true;
   const n = Number(s);
   return !isNaN(n) && n >= 1;
-}
-
-/**
- * Strokes received on a hole based on course handicap. Mirrors the scorecard's
- * strokesOnHole: handles plus handicaps (strokes given back on easiest holes)
- * and handicaps above 36 (up to 3 strokes on the lowest-index holes).
- */
-function holeStrokes(courseHandicap, holeHcpIndex) {
-  if (courseHandicap == null || isNaN(Number(courseHandicap))) return 0;
-  const ch = Number(courseHandicap);
-  if (ch < 0) {
-    const floored = Math.floor(Math.abs(ch));
-    return holeHcpIndex > (18 - floored) ? -1 : 0;
-  }
-  const floored = Math.floor(ch);
-  let strokes = 0;
-  if (floored > 0 && holeHcpIndex <= floored) strokes += 1;
-  if (floored > 18 && holeHcpIndex <= (floored - 18)) strokes += 1;
-  if (floored > 36 && holeHcpIndex <= (floored - 36)) strokes += 1;
-  return strokes;
 }
 
 /**
@@ -180,6 +165,19 @@ function bestBallNet(members, holeIdx, hcpIndexes, formula) {
     scores.push(gross - strokes);
   }
   return scores.length ? Math.min(...scores) : null;
+}
+
+/**
+ * The team's single score on a hole for gross-side purposes (standings, skins).
+ * Las Vegas returns the optimized 1-gross + 2-net total, aggregate the sum,
+ * everything else the best-ball low score.
+ */
+function teamGrossPerHole(members, holeIdx, round, hcpIndexes) {
+  if (isVegasFormat(round)) {
+    const v = vegasHoleScore(members, holeIdx, hcpIndexes || round?.hole_handicap_indexes || [], netHandicapScale(round));
+    return v ? v.total : null;
+  }
+  return isAggregateFormat(round) ? aggregateGross(members, holeIdx) : bestBallGross(members, holeIdx);
 }
 
 /**
@@ -319,9 +317,49 @@ export function computeTeamResults(round) {
   const netPot = results.net_pot || 0;
   const numTeams = teams.length;
 
+  // Las Vegas (1 Gross / 2 Net): a single combined score per hole, so teams are
+  // ranked on ONE leaderboard paid from one pot (gross pot + net pot combined).
+  if (isVegasFormat(round)) {
+    const vegasResults = teams.map(team => {
+      const perHole = Array.from({ length: 18 }, (_, h) =>
+        vegasHoleScore(team.members, h, hcpIndexes, netHandicapScale(round)));
+      const validHoles = perHole.filter(v => v != null);
+      const total = validHoles.reduce((a, v) => a + v.total, 0);
+      const disqualified = validHoles.length === 0;
+      return {
+        team_id: team.team_id,
+        team_name: team.team_name,
+        members: team.members.map(m => ({ player_id: m.player_id, name: m.name })),
+        vegas_total: disqualified ? null : total,
+        per_hole: perHole.map(v => (v ? v.total : null)),
+        per_hole_detail: perHole,
+        payout: 0,
+        disqualified,
+      };
+    }).sort((a, b) => {
+      if (a.disqualified && !b.disqualified) return 1;
+      if (!a.disqualified && b.disqualified) return -1;
+      return (a.vegas_total ?? 999) - (b.vegas_total ?? 999);
+    });
+
+    // One prize list: each place's amount is the gross place plus the net place
+    // for that finish, so the full main purse is paid out on a single ranking.
+    const gp = Array.isArray(results.gross_places) ? results.gross_places : [];
+    const np = Array.isArray(results.net_places) ? results.net_places : [];
+    const numPlaces = Math.min(Math.max(gp.length, np.length) || 3, numTeams);
+    const placeAmounts = (gp.length || np.length)
+      ? Array.from({ length: numPlaces }, (_, i) => (gp[i] || 0) + (np[i] || 0))
+      : geometricPayouts(numPlaces, grossPot + netPot);
+
+    const payouts = assignTeamPayouts(vegasResults, placeAmounts, "vegas_total", null);
+    vegasResults.forEach(t => { t.payout = payouts[t.team_id] || 0; });
+
+    return { team_gross_results: [], team_net_results: [], team_vegas_results: vegasResults };
+  }
+
   // Team gross best-ball
   const teamGrossResults = teams.map(team => {
-    const perHole = Array.from({ length: 18 }, (_, h) => isAggregateFormat(round) ? aggregateGross(team.members, h) : bestBallGross(team.members, h));
+    const perHole = Array.from({ length: 18 }, (_, h) => teamGrossPerHole(team.members, h, round, hcpIndexes));
     const validHoles = perHole.filter(s => s != null);
     const total = validHoles.reduce((a, b) => a + b, 0);
     const disqualified = validHoles.length === 0;
@@ -401,6 +439,29 @@ export function computeTeamResults(round) {
 export function applyTeamPayouts(results, teamResults) {
   const playerTeamGross = {};
   const playerTeamNet = {};
+
+  // Las Vegas: one combined payout per team, split equally among members. It's
+  // carried in gross_payout so existing payout tables and totals pick it up.
+  if ((teamResults.team_vegas_results || []).length > 0) {
+    const playerVegas = {};
+    for (const team of teamResults.team_vegas_results) {
+      if (team.payout > 0 && team.members?.length) {
+        const share = team.payout / team.members.length;
+        for (const m of team.members) playerVegas[m.player_id] = share;
+      }
+    }
+    const vegasPayouts = (results.payouts || []).map(p => {
+      const amt = playerVegas[p.player_id] || 0;
+      return {
+        ...p,
+        gross_payout: amt,
+        net_payout: 0,
+        total_payout: amt + (p.kp_payout || 0) + (p.gross_skins_payout || 0) +
+          (p.net_skins_payout || 0) + (p.deuce_payout || 0),
+      };
+    });
+    return { ...results, payouts: vegasPayouts, team_vegas_results: teamResults.team_vegas_results };
+  }
 
   for (const team of teamResults.team_gross_results || []) {
     if (team.gross_payout > 0 && team.members?.length) {
@@ -515,6 +576,17 @@ export function computeTeamSkins(round, grossSkinsPot, netSkinsPot) {
   const empty = { gross_skins: [], net_skins: [], grossSkinsPlayerPayouts: {}, netSkinsPlayerPayouts: {} };
   if (teams.length === 0) return empty;
 
+  // Filter teams by skins pool — a team competes only if at least one member
+  // is in the pool. Unconfigured pool = all teams; an explicitly cleared pool
+  // ([POOL_NONE]) = no teams. Matches getSkinsPoolPlayers in swiftScoreEngine.js.
+  const filterTeams = (poolIds) => {
+    if (isPoolNone(poolIds)) return [];
+    if (!Array.isArray(poolIds) || poolIds.length === 0) return teams;
+    return teams.filter(t => t.members.some(m => poolIds.includes(m.player_id)));
+  };
+  const grossTeams = filterTeams(round.gross_skins_player_ids);
+  const netTeams = filterTeams(round.net_skins_player_ids);
+
   const hcpIndexes = round.hole_handicap_indexes || [];
   const carryover = !!round.skins_carryover;
 
@@ -529,10 +601,10 @@ export function computeTeamSkins(round, grossSkinsPot, netSkinsPot) {
   });
 
   const grossHoleScores = Array.from({ length: 18 }, (_, h) =>
-    teams.map((t) => teamEntry(t, isAggregateFormat(round) ? aggregateGross(t.members, h) : bestBallGross(t.members, h)))
+    grossTeams.map((t) => teamEntry(t, teamGrossPerHole(t.members, h, round, hcpIndexes)))
   );
   const netHoleScores = Array.from({ length: 18 }, (_, h) =>
-    teams.map((t) => teamEntry(t, computeTeamNetPerHole(t, h, hcpIndexes, round)))
+    netTeams.map((t) => teamEntry(t, computeTeamNetPerHole(t, h, hcpIndexes, round)))
   );
 
   const grossRes = carryover
@@ -569,6 +641,63 @@ export function computeTeamSkins(round, grossSkinsPot, netSkinsPot) {
  * their teammate — mirroring how team skins and team gross/net payouts work.
  * Returns the updated payouts array.
  */
+/**
+ * True when side games (skins, KP, deuce) should be settled at TEAM level:
+ * a team game is active, it isn't an aggregate format, and the host hasn't
+ * turned team side games off.
+ */
+export function teamSideGamesActive(round) {
+  const isTeam = !!(round?.game_type && round.game_type !== "individual") || round?.team_mode === true;
+  if (!isTeam) return false;
+  // Aggregate and Las Vegas always keep side games individual.
+  if (isAggregateFormat(round) || isVegasFormat(round)) return false;
+  return round?.skins_team_mode !== false;
+}
+
+/**
+ * Tournament-level KP: KP pots are pooled across flights/days, so the per-player
+ * kp_payout values are recomputed after the per-round team split. This re-pools
+ * each team's KP winnings and divides them equally among its members, keyed by
+ * flight (players stay in the same flight across days).
+ * Mutates and returns the payouts array.
+ */
+export function splitTeamKpPayoutsAcrossRounds(rounds, payouts) {
+  const playerTeam = {};
+  const teamMembers = {};
+  (rounds || []).forEach(r => {
+    if (!teamSideGamesActive(r)) return;
+    buildTeams(r).forEach(t => {
+      const key = `${r.flight_number || 1}|${t.team_id}`;
+      if (!teamMembers[key]) teamMembers[key] = new Set();
+      t.members.forEach(m => {
+        if (!m.player_id) return;
+        if (!playerTeam[m.player_id]) playerTeam[m.player_id] = key;
+        teamMembers[playerTeam[m.player_id]].add(m.player_id);
+      });
+    });
+  });
+  if (Object.keys(playerTeam).length === 0) return payouts;
+
+  const totals = {};
+  (payouts || []).forEach(p => {
+    const key = playerTeam[p.player_id];
+    if (!key) return;
+    totals[key] = (totals[key] || 0) + (p.kp_payout || 0);
+  });
+
+  (payouts || []).forEach(p => {
+    const key = playerTeam[p.player_id];
+    if (!key) return;
+    const size = teamMembers[key]?.size || 1;
+    p.kp_payout = (totals[key] || 0) / size;
+    p.total_payout = (p.gross_payout || 0) + (p.net_payout || 0) +
+      (p.field_gross_payout || 0) + (p.field_net_payout || 0) +
+      (p.kp_payout || 0) + (p.gross_skins_payout || 0) +
+      (p.net_skins_payout || 0) + (p.deuce_payout || 0);
+  });
+  return payouts;
+}
+
 export function splitTeamSideGamePayouts(round, payouts) {
   const teams = buildTeams(round);
   if (teams.length === 0) return payouts;

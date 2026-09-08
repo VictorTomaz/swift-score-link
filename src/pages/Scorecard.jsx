@@ -25,6 +25,10 @@ import InfoTooltip from "@/components/InfoTooltip";
 import ScorecardScanner from "@/components/scanner/ScorecardScanner";
 import ScanReviewModal from "@/components/scanner/ScanReviewModal";
 import ScorecardPrintButton from "@/components/scorecard/ScorecardPrintButton";
+import FlightSwitcher from "@/components/scorecard/FlightSwitcher";
+import MissingDayBanner from "@/components/scorecard/MissingDayBanner";
+import RoundContextBanner from "@/components/scorecard/RoundContextBanner";
+import { flightLabel } from "@/lib/flightSwitcher";
 
 export default function Scorecard() {
 
@@ -440,16 +444,23 @@ export default function Scorecard() {
         // CRITICAL: Use player_id from the modal (now properly set)
         const playerId = ps.player_id;
         const playerName = ps.player_name;
-        
-        if (!playerId) {
-          console.warn('Skipping player with no player_id:', ps);
+        // Team-format rows carry teamMemberIds — the team's single score
+        // applies to every member (scramble / chapman / 6-6-6). Individual
+        // rows just use the single player_id.
+        const teamMemberIds = Array.isArray(ps.teamMemberIds) && ps.teamMemberIds.length > 0
+          ? ps.teamMemberIds
+          : null;
+        const targetIds = teamMemberIds || [playerId];
+
+        if (!playerId && targetIds.length === 0) {
+          console.warn('Skipping entry with no player_id:', ps);
           return;
         }
         
         // CRITICAL: Ensure scores is exactly 18 elements, all strings
         let scoresArray = ps.scores;
         if (!Array.isArray(scoresArray) || scoresArray.length !== 18) {
-          console.error('Invalid scores array for player:', { playerId, scoresArray });
+          console.error('Invalid scores array for entry:', { playerId, scoresArray });
           const tempScores = Array(18).fill('');
           if (Array.isArray(scoresArray)) {
             scoresArray.slice(0, 18).forEach((s, i) => {
@@ -470,23 +481,27 @@ export default function Scorecard() {
           return (isNaN(num) || num < 1 || num > 20) ? '' : String(num);
         });
         
-        console.log('Processing player:', { playerId, playerName, normalized });
+        console.log('Processing entry:', { playerId, playerName, isTeam: !!teamMemberIds, targetIds, normalized });
         
-        // Merge with existing scores for partial scans
-        const existingScores = liveScoresRef.current?.[playerId] || Array(18).fill('');
-        const merged = normalized.map((s, idx) => s !== '' ? s : (existingScores[idx] || ''));
-        
-        latestScores[playerId] = merged;
+        // Merge with existing scores for partial scans, then write to every
+        // target member (team fan-out or single player).
+        targetIds.forEach(tid => {
+          const existingScores = liveScoresRef.current?.[tid] || Array(18).fill('');
+          const merged = normalized.map((s, idx) => s !== '' ? s : (existingScores[idx] || ''));
+          latestScores[tid] = merged;
+          if (merged.every(s => s !== '')) {
+            completedIds.push(tid);
+          }
+        });
+
         playerDetails.push({
           playerId,
           playerName,
           scanType: ps.scanType || 'full',
           scoresCount: ps.scores?.length,
-          validScores: merged.filter(s => s !== '').length
+          validScores: normalized.filter(s => s !== '').length,
+          isTeam: !!teamMemberIds,
         });
-        if (merged.every(s => s !== '')) {
-          completedIds.push(playerId);
-        }
       });
       
       setScanDebug({ step: 'Saving to database...', data: { players: playerDetails } });
@@ -612,8 +627,13 @@ export default function Scorecard() {
       // are reflected immediately and survive navigation between roster/scoring views
       // without waiting for a refetch (which doesn't happen since the component doesn't unmount).
       queryClient.setQueryData(["round", roundId], (old) => old ? { ...old, ...data } : old);
-      // Use mutateAsync for critical updates like kp_winners to ensure they complete
-      updateMutation.mutateAsync(data).catch(() => {});
+      // Use mutateAsync for critical updates like kp_winners to ensure they complete.
+      // A failure must be visible — the optimistic cache above would otherwise
+      // show a saved change (e.g. side game checkboxes) that never persisted.
+      updateMutation.mutateAsync(data).catch((e) => {
+        toast.error("Change didn't save", { description: e.message || "Please try again." });
+        queryClient.invalidateQueries({ queryKey: ["round", roundId] });
+      });
     }
   }, [updateMutation, queryClient, roundId]);
 
@@ -788,9 +808,10 @@ export default function Scorecard() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 pb-20 sm:pb-0">
+      <RoundContextBanner round={round} />
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         <PageDescription
-           title={round.event_name}
+           title={round.is_multi_flight ? `${round.event_name} — ${flightLabel(round)}` : round.event_name}
            description={round.status === "roster" 
              ? "Add players to the round and configure their tee preferences. If your course already has par and handicap information saved, you only need to add players."
              : "Select the way you want to enter the scores, select player or players that you are scoring, then enter scores."
@@ -822,6 +843,8 @@ export default function Scorecard() {
         {/* Phase: Completed - View Scores */}
         {round.status === "completed" && (
           <div className="space-y-4">
+            <FlightSwitcher round={round} />
+            <MissingDayBanner round={round} />
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -965,8 +988,17 @@ export default function Scorecard() {
               <SideGamePlayers round={round} onUpdate={handleUpdate} />
             )}
 
+            {/* Flight switcher — multi-flight tournaments only */}
+            <FlightSwitcher
+              round={round}
+              onBeforeSwitch={async () => {
+                flushPending();
+                await new Promise(resolve => setTimeout(resolve, 600));
+              }}
+            />
+
             {/* Score entry mode toggle */}
-            <div className="sticky top-0 z-10 -mx-4 px-4 pt-2 pb-2 bg-background tour-scoring-modes">
+            <div className="sticky top-[52px] z-10 -mx-4 px-4 pt-2 pb-2 bg-background tour-scoring-modes">
               <div className="flex items-center gap-2 p-1 bg-muted rounded-xl">
                 {[['tap', 'Tap', Hand], ['type', 'Type', Keyboard], ['dictate', 'Dictate', Mic], ['scan', 'Scan', Camera]].map(([mode, label, Icon]) => (
                   <button

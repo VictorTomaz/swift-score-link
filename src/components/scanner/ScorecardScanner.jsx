@@ -5,6 +5,7 @@ import { Camera, X, AlertCircle, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { base44 } from "@/api/base44Client";
+import { isSingleTeamScoreFormat, getEntryTeams } from "@/lib/teamScoreEntry";
 import Webcam from "react-webcam";
 
 export default function ScorecardScanner({ onScanComplete, onClose, round }) {
@@ -138,6 +139,21 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
     setError(null);
 
     try {
+      const rosterPlayers = round?.players || [];
+      const rosterNames = rosterPlayers.map(p => p.name).filter(Boolean);
+      const rosterCount = rosterPlayers.length;
+
+      // Team formats (scramble, chapman, 6-6-6) print one row per TEAM, not
+      // per player — so the scanner reads team rows and fans each team's
+      // score out to all its members (matching how single-team-score formats
+      // are stored: every member carries the identical team score array).
+      const isTeamScore = isSingleTeamScoreFormat(round);
+      const entryTeams = isTeamScore ? getEntryTeams(round) : [];
+      const expectedCount = isTeamScore ? entryTeams.length : rosterCount;
+      const nameHints = isTeamScore
+        ? entryTeams.map(t => t.label || t.name).filter(Boolean)
+        : rosterNames;
+
       const blob = await fetch(imageSrc).then(r => r.blob());
       const file = new File([blob], "scorecard.jpg", { type: "image/jpeg" });
 
@@ -150,10 +166,17 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
           properties: {
             players: {
               type: "array",
+              description: isTeamScore
+                ? `Extract one row for EVERY team on this scorecard — do not skip any rows. There should be ${expectedCount} team rows total. Each row is one team's single gross score per hole.`
+                : `Extract one row for EVERY player on this scorecard — do not skip any rows. There should be ${expectedCount} player rows total.`,
               items: {
                 type: "object",
                 properties: {
-                  player_name: { type: "string" },
+                  player_name: { type: "string", description: nameHints.length
+                    ? (isTeamScore
+                      ? `Team label as printed on the scorecard (e.g. joined last names like "Smith / Jones"). Expected teams: ${nameHints.join(', ')}. Match each printed label to the closest expected team.`
+                      : `Player name as printed on the scorecard. Expected names on this card: ${nameHints.join(', ')}. Match each printed name to the closest expected name.`)
+                    : 'Player name as printed on the scorecard.' },
                   hole_1: { type: "string", description: "Score for hole 1 only, NOT the OUT total. Use 'X' for DQ/pickup (no score on that hole)." },
                   hole_2: { type: "string", description: "Score for hole 2 only" },
                   hole_3: { type: "string", description: "Score for hole 3 only" },
@@ -193,31 +216,82 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
 
       const newPlayerScores = [];
 
-      for (let i = 0; i < extractedPlayers.length; i++) {
-        const extracted = extractedPlayers[i];
-        const extractedName = (extracted.player_name || '').trim();
-        
-        let roundPlayer = findMatchingPlayer(extractedName, round?.players || []);
-        
-        if (!roundPlayer || !roundPlayer.player_id) {
-          roundPlayer = round?.players?.[i];
-        }
-        
-        if (!roundPlayer || !roundPlayer.player_id) {
-          continue;
-        }
-        
-        const holes = extractHoleScores(extracted);
-        
-        if (holes.every(h => h === '')) {
-          continue;
-        }
-
-        newPlayerScores.push({
-          playerId: roundPlayer.player_id,
-          playerName: extracted?.player_name || roundPlayer?.name,
-          scores: holes,
+      if (isTeamScore) {
+        // ─── TEAM ROWS (scramble / chapman / 6-6-6) ───────────────
+        // Each scanned row is one team's gross score. Match it to an entry
+        // team, then emit a single team-level entry carrying teamMemberIds so
+        // the review + save steps fan the 18-hole score out to every member.
+        const matchedTeamIds = new Set();
+        const resolvedTeams = extractedPlayers.map(extracted => {
+          const extractedName = (extracted.player_name || '').trim();
+          let team = findMatchingTeam(extractedName, entryTeams);
+          if (team && matchedTeamIds.has(team.id)) team = null;
+          if (team) matchedTeamIds.add(team.id);
+          return { extracted, team };
         });
+
+        let unmatchedTeamIdx = 0;
+        for (const { extracted, team } of resolvedTeams) {
+          let finalTeam = team;
+          if (!finalTeam) {
+            while (unmatchedTeamIdx < entryTeams.length && matchedTeamIds.has(entryTeams[unmatchedTeamIdx].id)) {
+              unmatchedTeamIdx++;
+            }
+            if (unmatchedTeamIdx < entryTeams.length) {
+              finalTeam = entryTeams[unmatchedTeamIdx];
+              matchedTeamIds.add(finalTeam.id);
+              unmatchedTeamIdx++;
+            }
+          }
+          if (!finalTeam) continue;
+
+          const holes = extractHoleScores(extracted);
+          if (holes.every(h => h === '')) continue;
+
+          newPlayerScores.push({
+            playerId: finalTeam.members[0]?.player_id,
+            playerName: finalTeam.label || finalTeam.name,
+            scores: [...holes],
+            teamMemberIds: finalTeam.memberIds,
+          });
+        }
+      } else {
+        // ─── INDIVIDUAL ROWS (best ball / individual play) ─────────
+        const matchedIds = new Set();
+        const resolvedRows = extractedPlayers.map(extracted => {
+          const extractedName = (extracted.player_name || '').trim();
+          let roundPlayer = findMatchingPlayer(extractedName, rosterPlayers);
+          if (roundPlayer && matchedIds.has(roundPlayer.player_id)) {
+            roundPlayer = null;
+          }
+          if (roundPlayer) matchedIds.add(roundPlayer.player_id);
+          return { extracted, roundPlayer };
+        });
+
+        let unmatchedIdx = 0;
+        for (const { extracted, roundPlayer } of resolvedRows) {
+          let finalPlayer = roundPlayer;
+          if (!finalPlayer || !finalPlayer.player_id) {
+            while (unmatchedIdx < rosterPlayers.length && matchedIds.has(rosterPlayers[unmatchedIdx].player_id)) {
+              unmatchedIdx++;
+            }
+            if (unmatchedIdx < rosterPlayers.length) {
+              finalPlayer = rosterPlayers[unmatchedIdx];
+              matchedIds.add(finalPlayer.player_id);
+              unmatchedIdx++;
+            }
+          }
+          if (!finalPlayer || !finalPlayer.player_id) continue;
+
+          const holes = extractHoleScores(extracted);
+          if (holes.every(h => h === '')) continue;
+
+          newPlayerScores.push({
+            playerId: finalPlayer.player_id,
+            playerName: extracted?.player_name || finalPlayer?.name,
+            scores: holes,
+          });
+        }
       }
 
       if (!newPlayerScores || newPlayerScores.length === 0) {
@@ -235,58 +309,48 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
     }
   };
 
-  const findMatchingPlayer = (extractedName, players) => {
-    if (!extractedName || !players || players.length === 0) return null;
-    
-    const normalize = (str) => str
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9\s]/g, '')
-      .replace(/\s+/g, ' ');
-    
-    const normalizedExtracted = normalize(extractedName);
-    
-    let match = players.find(p => normalize(p.name || '') === normalizedExtracted);
+  const normalizeName = (str) => (str || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ');
+
+  // Generic name matcher shared by player and team matching.
+  const findMatchByName = (extractedName, candidates, nameFn) => {
+    if (!extractedName || !candidates || candidates.length === 0) return null;
+    const normalizedExtracted = normalizeName(extractedName);
+
+    let match = candidates.find(c => normalizeName(nameFn(c)) === normalizedExtracted);
     if (match) return match;
-    
-    match = players.find(p => {
-      const normalizedRoster = normalize(p.name || '');
-      return normalizedRoster.includes(normalizedExtracted) || 
-             normalizedExtracted.includes(normalizedRoster);
+
+    match = candidates.find(c => {
+      const n = normalizeName(nameFn(c));
+      return n.includes(normalizedExtracted) || normalizedExtracted.includes(n);
     });
     if (match) return match;
-    
+
     const extractedFirst = normalizedExtracted.split(' ')[0];
     if (extractedFirst.length > 1) {
-      match = players.find(p => {
-        const rosterFirst = normalize(p.name || '').split(' ')[0];
-        return rosterFirst === extractedFirst;
-      });
+      match = candidates.find(c => normalizeName(nameFn(c)).split(' ')[0] === extractedFirst);
       if (match) return match;
     }
-    
-    for (const player of players) {
-      const normalizedRoster = normalize(player.name || '');
-      const longer = normalizedExtracted.length > normalizedRoster.length ? normalizedExtracted : normalizedRoster;
-      const shorter = normalizedExtracted.length > normalizedRoster.length ? normalizedRoster : normalizedExtracted;
-      
+
+    for (const candidate of candidates) {
+      const n = normalizeName(nameFn(candidate));
+      const longer = normalizedExtracted.length > n.length ? normalizedExtracted : n;
+      const shorter = normalizedExtracted.length > n.length ? n : normalizedExtracted;
       let matches = 0;
       let shortIdx = 0;
       for (let longIdx = 0; longIdx < longer.length && shortIdx < shorter.length; longIdx++) {
-        if (longer[longIdx] === shorter[shortIdx]) {
-          matches++;
-          shortIdx++;
-        }
+        if (longer[longIdx] === shorter[shortIdx]) { matches++; shortIdx++; }
       }
-      
-      const similarity = matches / longer.length;
-      if (similarity >= 0.7) {
-        return player;
-      }
+      if (matches / longer.length >= 0.7) return candidate;
     }
-    
     return null;
   };
+
+  const findMatchingPlayer = (extractedName, players) => findMatchByName(extractedName, players, p => p.name);
+  const findMatchingTeam = (extractedName, teams) => findMatchByName(extractedName, teams, t => `${t.label || ''} ${t.name || ''}`);
 
   const extractHoleScores = (extracted) => {
     const holes = Array(18).fill('');

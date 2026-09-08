@@ -1,7 +1,7 @@
 import React, { useState, useRef } from "react";
 import { jsPDF } from "jspdf";
 import { Button } from "@/components/ui/button";
-import { FileDown, ChevronDown, ChevronUp, HelpCircle } from "lucide-react";
+import { FileDown, ChevronDown, ChevronUp, HelpCircle, MessageCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import PageDescription from "@/components/PageDescription";
 
@@ -436,6 +436,19 @@ export default function Help() {
         </ol>
         <p className="text-xs text-muted-foreground mt-3 italic">Need tee times or printed scorecards? Use Settings → Tournament Logistics after Step 2.</p>
       </div>
+
+      {/* Ask the assistant */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("ss-open-help-assistant"))}
+        className="w-full flex items-center gap-3 bg-primary text-primary-foreground rounded-xl p-4 shadow-sm hover:bg-primary/90 transition-colors text-left"
+      >
+        <MessageCircle className="w-6 h-6 shrink-0" />
+        <div>
+          <p className="text-sm font-bold">Ask the Helper</p>
+          <p className="text-xs opacity-80 mt-0.5">Get instant answers to how-to and navigation questions.</p>
+        </div>
+      </button>
 
       {/* FAQ link — moved to its own page */}
       <div className="flex justify-center">

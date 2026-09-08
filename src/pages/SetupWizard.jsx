@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
 import { X, ChevronLeft } from 'lucide-react';
+import { toast } from 'sonner';
 
 import GamesConfiguration from '@/components/setup-wizard/GamesConfiguration';
 import Step1GameMode from '@/components/setup-wizard/Step1GameMode';
@@ -38,6 +39,7 @@ const defaultForm = {
   hole_handicap_indexes: [],
   course_tee_sets: [],
   event_name: '',
+  flight_name: '',
   date: new Date().toISOString().split('T')[0],
   buy_in: null,
   player_count: null,
@@ -72,6 +74,8 @@ const defaultForm = {
   is_multi_day: false,
   parent_round_id: null,
   series_type: 'multi_day',
+  added_money: 0,
+  added_money_label: '',
 };
 
 export default function SetupWizard() {
@@ -189,6 +193,12 @@ export default function SetupWizard() {
         locked_format: null,
         // Keep buy_in from parent — each flight collects its own entry fee
         buy_in: parentRound.buy_in ?? 0,
+        // Don't inherit the parent's added money — it lives on the parent and
+        // splits across flights; inheriting it here would double-count the pot.
+        added_money: 0,
+        added_money_label: '',
+        // Don't inherit the parent's flight_name — each flight gets its own name.
+        flight_name: '',
         player_count: isHybrid ? null : (parentRound.player_count ?? null),
       }));
       setFormReady(true);
@@ -196,31 +206,34 @@ export default function SetupWizard() {
     }
   }, [parentRound, formReady]);
 
-  // Add Day mode: create a new day for an existing flight. Inherits all
-  // settings from the source round (course, side games, format) but keeps
-  // the SAME flight_number and sets buy_in=0 (entry fee collected on Day 1).
+  // Add Day mode: auto-create the new day round with inherited settings and
+  // go straight to the Scorecard roster — no wizard steps. The user can edit
+  // settings from the Scorecard if needed. Only the date changes (auto +1 day).
+  // Guard: this effect can run twice (StrictMode / re-render), which would
+  // create two identical day rounds and double that flight's scores.
+  const addDayCreatedRef = useRef(false);
   useEffect(() => {
-    if (addDaySourceRound && !formReady) {
-      const kp_mode = !addDaySourceRound.kps_enabled ? 'off'
-        : addDaySourceRound.kp_separate_buy_in ? 'separate'
-        : 'part_of_skins';
-      // Auto-advance the date by 1 day from the source round's date —
-      // Day 2 is typically the next day. The user can still edit it on
-      // the Date step if the tournament plays on a different schedule.
+    if (addDaySourceRound && !formReady && !addDayCreatedRef.current) {
+      addDayCreatedRef.current = true;
       const nextDate = new Date(addDaySourceRound.date);
       nextDate.setDate(nextDate.getDate() + 1);
       const nextDayStr = nextDate.toISOString().split('T')[0];
-      setForm(f => ({
-        ...f,
+      // Carry the full roster over (handicaps, tee preferences, team tags) with
+      // scores cleared and day-specific tee times reset — the user goes straight
+      // to scoring and can still use Edit Roster / Tournament Logistics.
+      const carriedPlayers = (addDaySourceRound.players || []).map(p => ({
+        ...p,
+        scores: Array(18).fill(''),
+        tee_time: '',
+      }));
+      const formFields = {
         ...addDaySourceRound,
-        kp_mode,
         id: undefined,
-        // Link to the same tournament anchor as the source round
         parent_round_id: addDaySourceRound.parent_round_id || addDaySourceRound.id,
-        // Keep the SAME flight number — this is day 2 of the same flight
         flight_number: addDaySourceRound.flight_number || 1,
-        // Buy-in is 0 — entry fee was collected on Day 1
         buy_in: 0,
+        added_money: 0,
+        added_money_label: '',
         is_series_final: false,
         date: nextDayStr,
         players: [],
@@ -230,13 +243,35 @@ export default function SetupWizard() {
         results_pdf_url: null,
         scorecard_pdf_url: null,
         locked_format: null,
-        // Inherit the source round's player_count so the locked Player Count
-        // step displays the actual team/player number instead of "—".
-        // The roster carries over across days in a multi-day series.
         player_count: addDaySourceRound.player_count ?? null,
-      }));
-      setFormReady(true);
-      setCurrentStep(1);
+      };
+      const { id, created_date, updated_date, created_by, created_by_id,
+        results, results_pdf_url, scorecard_pdf_url, locked_format,
+        tee_sheet_config, is_public, kp_player_ids,
+        gross_skins_player_ids, net_skins_player_ids, deuce_player_ids,
+        ...createFields } = formFields;
+      base44.entities.Round.create({
+        ...createFields,
+        buy_in: Number(createFields.buy_in),
+        player_count: Number(createFields.player_count),
+        custom_gross_places: createFields.custom_gross_places ? Number(createFields.custom_gross_places) : 0,
+        custom_net_places: createFields.custom_net_places ? Number(createFields.custom_net_places) : 0,
+        // Straight to scoring — the roster is inherited from the previous day,
+        // and side game pools carry over (same players each day of a flight).
+        status: 'scoring',
+        players: carriedPlayers,
+        kp_winners: [],
+        kp_player_ids: addDaySourceRound.kp_player_ids || [],
+        gross_skins_player_ids: addDaySourceRound.gross_skins_player_ids || [],
+        net_skins_player_ids: addDaySourceRound.net_skins_player_ids || [],
+        deuce_player_ids: addDaySourceRound.deuce_player_ids || [],
+      }).then(round => {
+        sessionStorage.removeItem(SESSION_KEY);
+        navigate(`/Scorecard?id=${round.id}`);
+      }).catch(e => {
+        toast.error('Failed to create day: ' + (e.message || 'Unknown error'));
+        navigate('/Dashboard');
+      });
     }
   }, [addDaySourceRound, formReady]);
 
@@ -276,7 +311,7 @@ export default function SetupWizard() {
     if (addFlightParentId || addDayRoundId) {
       const { id, created_date, updated_date, created_by, created_by_id,
         results, results_pdf_url, scorecard_pdf_url, locked_format,
-        tee_sheet_config, is_public, kp_holes, kp_player_ids,
+        tee_sheet_config, is_public, kp_player_ids,
         gross_skins_player_ids, net_skins_player_ids, deuce_player_ids,
         ...flightFields } = formToSave;
       const round = await base44.entities.Round.create({
@@ -284,7 +319,10 @@ export default function SetupWizard() {
         status: 'roster',
         players: [],
         kp_winners: [],
-        kp_holes: [],
+        // KP holes are tournament-wide in multi-flight events — the same par-3
+        // holes are used across every flight so the pooled KP pot divides
+        // equally per hole. Inherit the parent/source round's kp_holes instead
+        // of clearing them, so a new flight matches the existing flights.
         kp_player_ids: [],
         gross_skins_player_ids: [],
         net_skins_player_ids: [],
@@ -330,7 +368,7 @@ export default function SetupWizard() {
   };
 
   const renderStep = () => {
-    const props = { form, updateForm, nextStep, prevStep, currentStep, STEPS, isAddDay: !!addDayRoundId };
+    const props = { form, updateForm, nextStep, prevStep, currentStep, STEPS, isAddDay: !!addDayRoundId, parentRound: addFlightParentId ? parentRound : null };
 
     switch (currentStep) {
       case 1:
@@ -362,7 +400,7 @@ export default function SetupWizard() {
       <div className="min-h-screen w-full max-w-md mx-auto flex items-center justify-center px-4">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" />
-          <p className="text-sm text-muted-foreground">{addFlightParentId ? 'Loading flight setup…' : 'Loading round setup…'}</p>
+          <p className="text-sm text-muted-foreground">{addDayRoundId ? 'Creating next day…' : addFlightParentId ? 'Loading flight setup…' : 'Loading round setup…'}</p>
         </div>
       </div>
     );

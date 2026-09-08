@@ -58,6 +58,8 @@ const Faq = lazy(() => import('@/pages/Faq'));
 const TermsAndPrivacy = lazy(() => import('@/pages/TermsAndPrivacy'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const TournamentLogistics = lazy(() => import('@/pages/TournamentLogistics'));
+const TournamentResults = lazy(() => import('@/pages/TournamentResults'));
+const TournamentHub = lazy(() => import('@/pages/TournamentHub'));
 const Paywall = lazy(() => import('@/pages/Paywall'));
 const AuthenticatedApp = () => {
   const { isLoadingAuth } = useAuth();
@@ -101,6 +103,8 @@ const AuthenticatedApp = () => {
             <Route path="/Faq" element={<Faq />} />
             <Route path="/Settings" element={<Settings />} />
             <Route path="/TournamentLogistics" element={<TournamentLogistics />} />
+            <Route path="/TournamentResults" element={<TournamentResults />} />
+            <Route path="/TournamentHub" element={<TournamentHub />} />
           </Route>
         </Route>
 

@@ -113,6 +113,7 @@ export default function PlayerRoster({ round, onUpdate }) {
   const [localPlayers, setLocalPlayers] = useState(round.players || []);
   const localPlayersRef = useRef(round.players || []);
   const processingRef = useRef(new Set());
+  const [rosterCollapsed, setRosterCollapsed] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [lastHeard, setLastHeard] = useState("");
   const recognitionRef = useRef(null);
@@ -419,6 +420,37 @@ export default function PlayerRoster({ round, onUpdate }) {
   // Multi-day series: copy the parent (Day 1) round's roster — names, handicaps,
   // tee preferences, and team tags (tee_group) — so Day 2+ keeps the same teams.
   const [carryingOver, setCarryingOver] = useState(false);
+
+  // Only offer carry-over when a real earlier day exists to copy from. A brand
+  // new flight (Day 1 of Flight 2+) has its own player pool — nothing to carry.
+  const [canCarryOver, setCanCarryOver] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      if (!round.parent_round_id) { setCanCarryOver(false); return; }
+      const isHybrid = !!(round.is_multi_day && round.is_multi_flight);
+      if (isHybrid && (round.flight_number || 1) > 1) {
+        const children = await base44.entities.Round.filter({ parent_round_id: round.parent_round_id });
+        const hasEarlierDay = (children || []).some(r =>
+          (r.flight_number || 1) === round.flight_number &&
+          r.id !== round.id &&
+          new Date(r.date) < new Date(round.date) &&
+          (r.players || []).length > 0
+        );
+        if (!cancelled) setCanCarryOver(hasEarlierDay);
+        return;
+      }
+      const parent = await base44.entities.Round.get(round.parent_round_id);
+      if (!cancelled) {
+        setCanCarryOver(
+          (parent?.players || []).length > 0 &&
+          new Date(parent.date) < new Date(round.date)
+        );
+      }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [round.parent_round_id, round.flight_number, round.date, round.is_multi_day, round.is_multi_flight]);
   const carryOverFromParent = async () => {
     if (!round.parent_round_id) return;
     setCarryingOver(true);
@@ -701,10 +733,20 @@ export default function PlayerRoster({ round, onUpdate }) {
       "Oscar Morris"
     ];
     const targetCount = originalPlayerCount || round.player_count || 8;
-    const testPlayers = testNames.slice(0, targetCount).map(name =>
-      buildPlayerEntry(name, String(Math.floor(Math.random() * 20)), null)
-    );
-    const updated = [...players, ...testPlayers];
+    const current = localPlayersRef.current || players;
+    // Only fill the remaining open spots, and never re-add a name already on
+    // the roster — so tapping the button twice can't double the field.
+    const remaining = Math.max(0, targetCount - current.length);
+    if (remaining === 0) {
+      toast.info(`Roster already has ${current.length} players`);
+      return;
+    }
+    const existing = new Set(current.map(p => p.name));
+    const testPlayers = testNames
+      .filter(n => !existing.has(n))
+      .slice(0, remaining)
+      .map(name => buildPlayerEntry(name, String(Math.floor(Math.random() * 20)), null));
+    const updated = [...current, ...testPlayers];
     applyLocalUpdate(updated);
     onUpdate({ players: updated, _immediate: true });
     toast.success(`Added ${testPlayers.length} test player(s)`);
@@ -713,7 +755,7 @@ export default function PlayerRoster({ round, onUpdate }) {
   return (
     <div className="space-y-4">
       {/* Carry-over roster & teams from the parent (Day 1) round */}
-      {round.parent_round_id && players.length === 0 && (
+      {canCarryOver && players.length === 0 && (
         <div className="rounded-xl border-2 border-primary/40 bg-primary/5 p-4 space-y-3">
           <div className="flex items-start gap-2">
             <Users className="w-5 h-5 text-primary shrink-0 mt-0.5" />
@@ -901,14 +943,20 @@ export default function PlayerRoster({ round, onUpdate }) {
           {/* Master roster quick-add */}
            {masterPlayers.length > 0 && (
              <div className="pt-1">
-               <div className="flex items-center gap-2 mb-2 p-2.5 bg-accent/15 border border-accent/40 rounded-lg">
+               <button
+                 type="button"
+                 onClick={() => setRosterCollapsed(v => !v)}
+                 className="w-full flex items-center gap-2 mb-2 p-2.5 bg-accent/15 border border-accent/40 rounded-lg hover:bg-accent/25 transition-colors"
+               >
                  <span className="text-base">⭐</span>
-                 <div className="flex-1">
+                 <div className="flex-1 text-left">
                    <p className="text-sm font-bold text-foreground">Master Roster</p>
                    <p className="text-xs text-muted-foreground">Tap any name to instantly add them</p>
                  </div>
                  <span className="text-xs text-muted-foreground font-medium">{masterPlayers.length} players</span>
-               </div>
+                 {rosterCollapsed ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronUp className="w-4 h-4 text-muted-foreground" />}
+               </button>
+               {!rosterCollapsed && (
                <div className="grid grid-cols-2 gap-1.5">
                  {[...masterPlayers].sort((a, b) => a.name.localeCompare(b.name)).map(mp => {
                   const isOnRoster = localPlayersRef.current.some(p => p.name === mp.name);
@@ -929,8 +977,9 @@ export default function PlayerRoster({ round, onUpdate }) {
                     </button>
                   );
                 })}
-              </div>
-            </div>
+               </div>
+               )}
+               </div>
           )}
         </CardContent>
       </Card>

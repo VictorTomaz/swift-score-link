@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Layers, ChevronDown, ChevronRight, PlusCircle, Edit, Trophy, CalendarDays } from "lucide-react";
+import { Layers, ChevronDown, ChevronRight, PlusCircle, Edit, Trophy, CalendarDays, Trash2, Calendar } from "lucide-react";
 
 /**
  * Renders a multi-flight tournament as a single expandable card on the Dashboard.
@@ -12,7 +12,7 @@ import { Layers, ChevronDown, ChevronRight, PlusCircle, Edit, Trophy, CalendarDa
  * Does NOT change any data — it's a display-only aggregation layer over the
  * existing parent/child round structure.
  */
-export default function TournamentGroupCard({ group, isCompleted, onEdit }) {
+export default function TournamentGroupCard({ group, isCompleted, onEdit, onDelete }) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
 
@@ -29,8 +29,6 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit }) {
   });
   const totalPlayers = Object.values(flightPlayerCounts).reduce((s, c) => s + c, 0);
   const totalPot = group.reduce((s, r) => s + ((r.buy_in || 0) * (r.player_count || 0)), 0);
-  const linkBase = isCompleted ? "/Results" : "/Scorecard";
-  const finalRound = group[group.length - 1];
   // Flight count = number of distinct flight_numbers, NOT total rounds.
   // A multi-day tournament can have multiple rounds per flight (Day 1, Day 2…),
   // so group.length over-counts. Default to 1 when flight_number is unset.
@@ -68,13 +66,22 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit }) {
               <div
                 key={round.id}
                 className="flex items-center justify-between gap-2 py-1.5 cursor-pointer hover:bg-muted/50 rounded-md px-2 -mx-2"
-                onClick={() => navigate(`${linkBase}?id=${round.id}`)}
+                onClick={() => navigate(`${round.status === "completed" ? "/Results" : "/Scorecard"}?id=${round.id}`)}
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                   <span className="text-xs font-medium text-muted-foreground w-14 shrink-0">
                     Flight {round.flight_number || idx + 1}
                   </span>
-                  <span className="text-sm text-foreground truncate">{round.event_name}</span>
+                  {/* Show the flight's own name if it has one. Otherwise leave
+                      it blank — the "Flight N" label above is enough. */}
+                  {round.flight_name && (
+                    <span className="text-sm text-foreground truncate">{round.flight_name}</span>
+                  )}
+                  {round.date && (
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {new Date(round.date.replace(/-/g, '/')).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="text-xs text-muted-foreground">{round.player_count || 0}p</span>
@@ -85,6 +92,14 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit }) {
                   >
                     <Edit className="w-3 h-3" />
                   </button>
+                  {onDelete && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(round); }}
+                      className="flex items-center gap-1 text-xs text-destructive-foreground bg-destructive hover:bg-destructive/90 border border-destructive rounded-md px-2 py-1 transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </div>
               </div>
@@ -119,11 +134,23 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit }) {
                 ));
             })()}
 
-            {/* Combined Results — navigates to the final flight's Results page,
-                which computes field standings across all flights */}
+            {/* Tournament Hub — one screen for every flight and day, with
+                scoring progress and a single Finalize action. */}
+            <button
+              onClick={() => navigate(`/TournamentHub?id=${parentId}`)}
+              className="w-full flex items-center justify-center gap-1.5 py-2 mt-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Tournament Hub
+            </button>
+
+            {/* Combined Results — opens the dedicated tournament-level final
+                results page (combined standings, field prizes, per-flight
+                results, and final payouts). Accessible from any flight once the
+                tournament is finalized on the final flight's final day. */}
             {isCompleted && (
               <button
-                onClick={() => navigate(`/Results?id=${finalRound.id}`)}
+                onClick={() => navigate(`/TournamentResults?id=${parentId}`)}
                 className="w-full flex items-center justify-center gap-1.5 py-2 mt-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors"
               >
                 <Trophy className="w-3.5 h-3.5" />
@@ -131,8 +158,11 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit }) {
               </button>
             )}
 
-            {/* Add Flight — opens Setup Wizard in Add Flight mode (inherits settings) */}
-            {!isCompleted && (
+            {/* Add Flight — opens Setup Wizard in Add Flight mode (inherits
+                settings). Shown even when every existing flight is completed:
+                finishing Flights 1–3 doesn't mean the tournament is over, the
+                organizer still needs to add Flight 4. */}
+            {group.some(r => r.is_multi_flight) && (
               <button
                 onClick={() => navigate(`/SetupWizard?addFlight=${parentId}`)}
                 className="w-full flex items-center justify-center gap-1.5 py-2 mt-1 rounded-md bg-logistics/10 hover:bg-logistics/20 text-logistics text-xs font-semibold transition-colors"

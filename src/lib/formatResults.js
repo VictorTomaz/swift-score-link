@@ -1,4 +1,32 @@
 import { computeStandingsDisplay, computeTeamStandingsDisplay, rankLabel } from "@/lib/standingsRanks";
+import { formatFlightSections, buildPlayerFlightLabels } from "@/lib/formatFlightResults";
+import { formatSideGamesSections, sideGameWinnerLabel, shareSuffix } from "@/lib/formatSideGames";
+import { buildTeamNameByPlayer } from "@/lib/teamPlayerLookup";
+
+/**
+ * Groups side-game entries (skins, KPs, deuces) by the winner's flight.
+ * With no flight labels, returns a single unlabeled group.
+ */
+function groupByFlight(entries, flightLabels) {
+  if (!flightLabels || !flightLabels.__order || flightLabels.__order.length < 2) {
+    return [{ label: null, entries }];
+  }
+  const byNumber = flightLabels.__byNumber || {};
+  const groups = new Map();
+  entries.forEach(e => {
+    const label =
+      flightLabels[e.player_id] ||
+      byNumber[String(e.flight)] ||
+      (typeof e.flight === "string" ? e.flight : null) ||
+      "Other";
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(e);
+  });
+  const order = [...flightLabels.__order, "Other"];
+  return [...groups.entries()]
+    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+    .map(([label, items]) => ({ label, entries: items }));
+}
 
 /**
  * Returns the score-result label (Eagle, Birdie, Par, Bogey, etc.) for a given
@@ -23,7 +51,7 @@ function scoreResultLabel(score, par) {
  * Formats round results into a clean, shareable text message
  * mirroring the layout of the Results page.
  */
-export function formatResultsText(round, results, dayLabel = null) {
+export function formatResultsText(round, results, dayLabel = null, flightData = {}) {
   if (!round || !results) return "";
 
   const lines = [];
@@ -61,10 +89,29 @@ export function formatResultsText(round, results, dayLabel = null) {
   const isTeamEvent = !!(round.game_type && round.game_type !== "individual");
   const holdMain = !!round.is_multi_day && !results.is_series_cumulative;
 
-  if (holdMain) {
+  const flightSections = formatFlightSections(results, isStableford, flightData, round);
+  const hasFlights = flightSections.length > 0;
+  const flightLabels = hasFlights ? buildPlayerFlightLabels(results, flightData) : {};
+
+  if (hasFlights) {
+    lines.push(...flightSections);
+  } else if (holdMain) {
     lines.push("🏆 MAIN STANDINGS HELD");
     lines.push("   Gross & net purses held until the final round.");
     lines.push("   Side games (skins, KPs, deuces) settle today.");
+    lines.push("");
+  } else if (isTeamEvent && (results.team_vegas_results || []).length > 0) {
+    // Las Vegas (1 gross / 2 net): one combined leaderboard, one prize list.
+    const vegas = results.team_vegas_results;
+    const eligible = vegas.filter(t => !t.disqualified);
+    lines.push("🏆 LAS VEGAS — 1 GROSS / 2 NET");
+    vegas.forEach(t => {
+      if (t.disqualified) { lines.push(`—. ${t.team_name} — DQ`); return; }
+      const better = eligible.filter(x => x.vegas_total < t.vegas_total).length;
+      const tied = eligible.filter(x => x.vegas_total === t.vegas_total).length > 1;
+      const perMember = t.payout > 0 && t.members?.length ? t.payout / t.members.length : 0;
+      lines.push(`${tied ? "T" : ""}${better + 1}. ${t.team_name} — ${t.vegas_total}${perMember > 0.01 ? ` — $${perMember.toFixed(2)}/player` : ""}`);
+    });
     lines.push("");
   } else if (isTeamEvent) {
     const teamGross = results.team_gross_results || [];
@@ -136,8 +183,18 @@ export function formatResultsText(round, results, dayLabel = null) {
     }
   }
 
+  // Multi-flight / multi-day: side games are listed per flight-day from each
+  // round's own results (the final round's combined results only carry the
+  // final flight's skins), so the flat blocks below are skipped.
+  // Team-aware KP/deuce naming for the single-round (non-series) blocks below.
+  const sideGameTeams = buildTeamNameByPlayer([round]);
+
+  const perFlightSideGames = formatSideGamesSections(flightData.sideGames || []);
+  const useSideGameEntries = perFlightSideGames.length > 0;
+  if (useSideGameEntries) lines.push(...perFlightSideGames);
+
   // Side games day indicator — multi-day series settle side games day-by-day
-  if (dayTag) {
+  if (dayTag && !useSideGameEntries) {
     lines.push(`🎲 SIDE GAMES${dayTag}`);
     lines.push("");
   }
@@ -145,18 +202,21 @@ export function formatResultsText(round, results, dayLabel = null) {
   // Gross Skins
   const grossSkins = results.gross_skins || [];
   const showGrossSkins = round.gross_skins_enabled || (results.gross_skins_allocated_pot > 0) || grossSkins.length > 0;
-  if (showGrossSkins) {
+  if (showGrossSkins && !useSideGameEntries) {
     const pot = results.gross_skins_allocated_pot || results.gross_skins_separate_pot || 0;
     lines.push(`⛳ GROSS SKINS${pot > 0 ? ` ($${Math.round(pot)} pot)` : ""}`);
     if (grossSkins.length > 0) {
-      grossSkins.forEach(skin => {
-        const playerName = round.players?.find(p => p.player_id === skin.player_id)?.name || skin.name || skin.player_id;
-        const carry = skin.carryover_from?.length > 0 ? ` (carries ${skin.carryover_from.join(",")})` : "";
-        const resultType = skin.achievement || scoreResultLabel(skin.score, round.par?.[skin.hole - 1]);
-        lines.push(`   Hole ${skin.hole} — ${playerName}${resultType ? ` — ${resultType}` : ""}${carry}`);
-        if (skin.value > 0) {
-          lines.push(`   +$${skin.value.toFixed(2)}`);
-        }
+      groupByFlight(grossSkins, flightLabels).forEach(group => {
+        if (group.label) lines.push(`   ── ${group.label} ──`);
+        group.entries.forEach(skin => {
+          const playerName = round.players?.find(p => p.player_id === skin.player_id)?.name || skin.name || skin.player_id;
+          const carry = skin.carryover_from?.length > 0 ? ` (carries ${skin.carryover_from.join(",")})` : "";
+          const resultType = skin.achievement || scoreResultLabel(skin.score, round.par?.[skin.hole - 1]);
+          lines.push(`   Hole ${skin.hole} — ${playerName}${resultType ? ` — ${resultType}` : ""}${carry}`);
+          if (skin.value > 0) {
+            lines.push(`   +$${skin.value.toFixed(2)}`);
+          }
+        });
       });
     } else {
       lines.push("   No skins won");
@@ -167,18 +227,21 @@ export function formatResultsText(round, results, dayLabel = null) {
   // Net Skins
   const netSkins = results.net_skins || [];
   const showNetSkins = round.net_skins_enabled || (results.net_skins_allocated_pot > 0) || netSkins.length > 0;
-  if (showNetSkins) {
+  if (showNetSkins && !useSideGameEntries) {
     const pot = results.net_skins_allocated_pot || results.net_skins_separate_pot || 0;
     lines.push(`🎯 NET SKINS${pot > 0 ? ` ($${Math.round(pot)} pot)` : ""}`);
     if (netSkins.length > 0) {
-      netSkins.forEach(skin => {
-        const playerName = round.players?.find(p => p.player_id === skin.player_id)?.name || skin.name || skin.player_id;
-        const carry = skin.carryover_from?.length > 0 ? ` (carries ${skin.carryover_from.join(",")})` : "";
-        const resultType = skin.achievement || scoreResultLabel(skin.score, round.par?.[skin.hole - 1]);
-        lines.push(`   Hole ${skin.hole} — ${playerName}${resultType ? ` — ${resultType}` : ""}${carry}`);
-        if (skin.value > 0) {
-          lines.push(`   +$${skin.value.toFixed(2)}`);
-        }
+      groupByFlight(netSkins, flightLabels).forEach(group => {
+        if (group.label) lines.push(`   ── ${group.label} ──`);
+        group.entries.forEach(skin => {
+          const playerName = round.players?.find(p => p.player_id === skin.player_id)?.name || skin.name || skin.player_id;
+          const carry = skin.carryover_from?.length > 0 ? ` (carries ${skin.carryover_from.join(",")})` : "";
+          const resultType = skin.achievement || scoreResultLabel(skin.score, round.par?.[skin.hole - 1]);
+          lines.push(`   Hole ${skin.hole} — ${playerName}${resultType ? ` — ${resultType}` : ""}${carry}`);
+          if (skin.value > 0) {
+            lines.push(`   +$${skin.value.toFixed(2)}`);
+          }
+        });
       });
     } else {
       lines.push("   No skins won");
@@ -188,36 +251,40 @@ export function formatResultsText(round, results, dayLabel = null) {
 
   // KP Winners
   const kpResults = results.kp_results || [];
-  if (kpResults.length > 0) {
+  if (kpResults.length > 0 && !useSideGameEntries) {
     const kpPot = results.kp_separate_pot > 0 ? ` ($${Math.round(results.kp_separate_pot)} pot)` : "";
     lines.push(`🎯 KP WINNERS${kpPot}`);
     const perEntryAmount = Number(results.kp_per_entry_amount) || 0;
     const kpFoldedIntoSkins = !round.kp_separate_buy_in && (round.gross_skins_enabled || round.net_skins_enabled);
-    kpResults.forEach(kp => {
-      const playerName = round.players?.find(p => p.player_id === kp.player_id)?.name || kp.player_id;
-      lines.push(`   Hole ${kp.hole} — ${playerName}`);
-      if (perEntryAmount > 0) {
-        lines.push(`   +$${perEntryAmount.toFixed(2)}`);
-      } else if (kpFoldedIntoSkins) {
-        lines.push(`   (included in skins)`);
-      }
+    groupByFlight(kpResults, flightLabels).forEach(group => {
+      if (group.label) lines.push(`   ── ${group.label} ──`);
+      group.entries.forEach(kp => {
+        lines.push(`   Hole ${kp.hole} — ${sideGameWinnerLabel(round, kp.player_id, kp.name, sideGameTeams)}`);
+        if (perEntryAmount > 0) {
+          lines.push(`   +$${perEntryAmount.toFixed(2)}${shareSuffix(kp.player_id, perEntryAmount, sideGameTeams)}`);
+        } else if (kpFoldedIntoSkins) {
+          lines.push(`   (included in skins)`);
+        }
+      });
     });
     lines.push("");
   }
 
   // Deuces
-  if (round.deuce_pot_enabled) {
+  if (round.deuce_pot_enabled && !useSideGameEntries) {
     const deuces = results.deuces || [];
     const deucePot = results.deuce_pot > 0 ? ` ($${Math.round(results.deuce_pot)} pot)` : "";
     lines.push(`✌️ DEUCE POT${deucePot}`);
     if (deuces.length > 0) {
       const perDeuceAmount = results.deuce_per_entry_amount || 0;
-      deuces.forEach(d => {
-        const playerName = round.players?.find(p => p.player_id === d.player_id)?.name || d.player_id;
-        lines.push(`   Hole ${d.hole} — ${playerName}`);
-        if (perDeuceAmount > 0) {
-          lines.push(`   +$${perDeuceAmount.toFixed(2)}`);
-        }
+      groupByFlight(deuces, flightLabels).forEach(group => {
+        if (group.label) lines.push(`   ── ${group.label} ──`);
+        group.entries.forEach(d => {
+          lines.push(`   Hole ${d.hole} — ${sideGameWinnerLabel(round, d.player_id, d.name, sideGameTeams)}`);
+          if (perDeuceAmount > 0) {
+            lines.push(`   +$${perDeuceAmount.toFixed(2)}${shareSuffix(d.player_id, perDeuceAmount, sideGameTeams)}`);
+          }
+        });
       });
     } else {
       lines.push("   No deuces this round");
@@ -226,12 +293,50 @@ export function formatResultsText(round, results, dayLabel = null) {
   }
 
   // Final payouts summary
-  const payouts = (results.payouts || []).filter(p => p.total_payout > 0);
+  const payouts = (results.payouts || []).filter(p => p.total_payout > 0.01);
   if (payouts.length > 0) {
-    lines.push("💵 FINAL PAYOUTS");
-    payouts.forEach(p => {
-      lines.push(`   ${p.name} — $${Math.round(p.total_payout)}`);
-    });
+    lines.push(hasFlights ? "💵 TOTAL PAYOUTS (ALL FLIGHTS)" : "💵 FINAL PAYOUTS");
+    const sortedPayouts = [...payouts].sort((a, b) => b.total_payout - a.total_payout);
+
+    // Team events: group each payout under its team so the message reads as
+    // team results rather than a flat list of individual players.
+    const teamByPlayer = {};
+    if (isTeamEvent) {
+      const allTeams = [
+        ...(results.team_vegas_results || []),
+        ...(results.team_gross_results || []),
+        ...(results.team_net_results || []),
+        ...(flightData.flights || []).flatMap(f => [...(f.team_gross_results || []), ...(f.team_net_results || [])]),
+        ...(results.all_flight_standings || []).flatMap(f => [...(f.team_gross_results || []), ...(f.team_net_results || [])]),
+      ];
+      allTeams.forEach(t => {
+        (t.members || []).forEach(m => {
+          if (m.player_id && !teamByPlayer[m.player_id]) teamByPlayer[m.player_id] = t.team_name;
+        });
+      });
+    }
+
+    if (isTeamEvent && Object.keys(teamByPlayer).length > 0) {
+      const groups = new Map();
+      sortedPayouts.forEach(p => {
+        const key = teamByPlayer[p.player_id] || "Other";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+      });
+      const ordered = [...groups.entries()].sort((a, b) => {
+        const sum = arr => arr.reduce((s, x) => s + x.total_payout, 0);
+        return sum(b[1]) - sum(a[1]);
+      });
+      ordered.forEach(([teamName, members]) => {
+        const teamTotal = members.reduce((s, x) => s + x.total_payout, 0);
+        lines.push(`   ${teamName} — $${teamTotal.toFixed(2)}`);
+        members.forEach(p => lines.push(`      ${p.name} — $${p.total_payout.toFixed(2)}`));
+      });
+    } else {
+      sortedPayouts.forEach(p => {
+        lines.push(`   ${p.name} — $${p.total_payout.toFixed(2)}`);
+      });
+    }
     lines.push("");
   }
 

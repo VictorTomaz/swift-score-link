@@ -97,7 +97,14 @@ export default function History() {
                       <Trophy className={`w-5 h-5 ${round.status === "completed" ? "text-primary" : "text-accent"}`} />
                     </div>
                     <div>
-                      <p className="font-semibold text-foreground">{round.event_name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-semibold text-foreground">{round.event_name}</p>
+                        {(round.is_multi_flight || (round.flight_number || 1) > 1) && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-logistics/15 text-logistics whitespace-nowrap">
+                            {round.flight_name || `Flight ${round.flight_number || 1}`}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground mt-0.5">
                         {round.date && (
                           <span className="flex items-center gap-1">

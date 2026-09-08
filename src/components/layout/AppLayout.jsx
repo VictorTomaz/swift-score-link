@@ -6,7 +6,8 @@ import PageHeader from "@/components/PageHeader";
 import TourButton from "@/components/tour/TourButton";
 import MobileHeader from "@/components/layout/MobileHeader";
 import HeaderSetupButton from "@/components/HeaderSetupButton";
-import { useCallback } from "react";
+import HelpAssistant from "@/components/help-assistant/HelpAssistant";
+import { useCallback, useEffect } from "react";
 
 const publicNavItems = [
   { path: "/Dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -26,6 +27,23 @@ export default function AppLayout() {
   const navItems = publicNavItems;
 
 
+
+  // iOS: when the keyboard opens, the focused input can stay hidden behind the
+  // keyboard/bottom nav. Scroll it into the visible viewport after the keyboard
+  // animation settles.
+  useEffect(() => {
+    const onFocusIn = (e) => {
+      const el = e.target;
+      if (!el.matches?.('input, textarea, select')) return;
+      setTimeout(() => {
+        if (document.activeElement === el) {
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      }, 350);
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
 
   const mobileTabPaths = ["/Dashboard", "/SetupWizard", "/History", "/PlayersManagement", "/Settings"];
 
@@ -95,7 +113,8 @@ export default function AppLayout() {
                and component state — fails the App Store "Bottom Tabs & Stack Preservation" scan.
                Tab switches must preserve state natively via React Router. */}
            <div
-             className="w-full max-w-2xl md:max-w-7xl mx-auto px-4 py-6 md:py-8"
+             key={location.pathname}
+             className="w-full max-w-2xl md:max-w-7xl mx-auto px-4 py-6 md:py-8 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
              style={{ paddingLeft: 'max(1rem, env(safe-area-inset-left))', paddingRight: 'max(1rem, env(safe-area-inset-right))', boxSizing: 'border-box' }}
            >
              <Outlet />
@@ -143,6 +162,8 @@ export default function AppLayout() {
           </div>
         </nav>
       )}
+
+      <HelpAssistant />
 
     </div>
   );

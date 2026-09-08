@@ -1,13 +1,36 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 import { jsPDF } from 'npm:jspdf@4.0.0';
+import { drawCombinedSheet } from './combinedPdf.ts';
 
-Deno.serve(async (req) => {
+export default async function(req) {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { roundId } = await req.json();
+    const { roundId, roundIds } = await req.json();
+    if (roundIds !== undefined) {
+      if (!Array.isArray(roundIds) || !roundIds.length || roundIds.length > 200 || roundIds.some(id => typeof id !== 'string' || !id.trim())) {
+        return Response.json({ error: 'Provide 1–200 valid round IDs' }, { status: 400 });
+      }
+      const rounds = [];
+      const ids = [...new Set(roundIds)];
+      for (let i = 0; i < ids.length; i += 10) {
+        rounds.push(...await Promise.all(ids.slice(i, i + 10).map(id => base44.entities.Round.get(id))));
+      }
+      if (rounds.some(r => !r)) return Response.json({ error: 'Round not found' }, { status: 404 });
+      const anchor = rounds[0].parent_round_id || rounds[0].id;
+      if (rounds.some(r => (r.parent_round_id || r.id) !== anchor)) {
+        return Response.json({ error: 'All rounds must belong to the same tournament' }, { status: 400 });
+      }
+      rounds.sort((a,b) => (a.date || '').localeCompare(b.date || '') || (a.flight_number || 1) - (b.flight_number || 1));
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
+      drawCombinedSheet(pdf, rounds);
+      const filename = `combined-tee-sheet-${rounds[0].event_name || 'golf'}.pdf`;
+      const file = new File([pdf.output('arraybuffer')], filename, { type: 'application/pdf' });
+      const { file_url } = await base44.asServiceRole.integrations.Core.UploadFile({ file });
+      return Response.json({ url: file_url, filename });
+    }
     if (!roundId) return Response.json({ error: 'roundId required' }, { status: 400 });
 
     const round = await base44.entities.Round.get(roundId);
@@ -117,4 +140,4 @@ Deno.serve(async (req) => {
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
-});
+}

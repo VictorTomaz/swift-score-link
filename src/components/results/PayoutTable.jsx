@@ -91,7 +91,7 @@ export default function PayoutTable({ results, holdMainPayouts, payoutDays }) {
             <span className="text-xs text-muted-foreground">
               {holdMainPayouts
                 ? `Main purse held until final round · side games per day`
-                : `Main: $${Math.round(results.total_pot)}${results.deuce_pot > 0 ? ` · Deuce: $${Math.round(results.deuce_pot)}` : ""}${results.gross_skins_separate_pot > 0 ? ` · Gross Skins: $${Math.round(results.gross_skins_separate_pot)}` : ""}${results.net_skins_separate_pot > 0 ? ` · Net Skins: $${Math.round(results.net_skins_separate_pot)}` : ""}`}
+                : `Main: $${Math.round(results.total_pot)}${results.added_money > 0 ? ` · ${results.added_money_label || 'Added'}: $${Math.round(results.added_money)}` : ''}${results.deuce_pot > 0 ? ` · Deuce: $${Math.round(results.deuce_pot)}` : ""}${results.gross_skins_separate_pot > 0 ? ` · Gross Skins: $${Math.round(results.gross_skins_separate_pot)}` : ""}${results.net_skins_separate_pot > 0 ? ` · Net Skins: $${Math.round(results.net_skins_separate_pot)}` : ""}`}
             </span>
           </div>
         </CardHeader>
@@ -175,7 +175,7 @@ export default function PayoutTable({ results, holdMainPayouts, payoutDays }) {
           <span className="text-xs text-muted-foreground">
             {holdMainPayouts
               ? `Main purse held until final round · side games only`
-              : `Main: $${Math.round(results.total_pot)}${results.deuce_pot > 0 ? ` · Deuce: $${Math.round(results.deuce_pot)}` : ""}${results.gross_skins_separate_pot > 0 ? ` · Gross Skins: $${Math.round(results.gross_skins_separate_pot)}` : ""}${results.net_skins_separate_pot > 0 ? ` · Net Skins: $${Math.round(results.net_skins_separate_pot)}` : ""}`}
+              : `Main: $${Math.round(results.total_pot)}${results.added_money > 0 ? ` · ${results.added_money_label || 'Added'}: $${Math.round(results.added_money)}` : ''}${results.deuce_pot > 0 ? ` · Deuce: $${Math.round(results.deuce_pot)}` : ""}${results.gross_skins_separate_pot > 0 ? ` · Gross Skins: $${Math.round(results.gross_skins_separate_pot)}` : ""}${results.net_skins_separate_pot > 0 ? ` · Net Skins: $${Math.round(results.net_skins_separate_pot)}` : ""}`}
           </span>
         </div>
       </CardHeader>
