@@ -165,11 +165,36 @@ public class StoreKitPlugin: CAPPlugin {
                     "entitlements": entitlementsList
                 ])
             } catch {
+                // "The operation couldn't be completed" (error.localizedDescription) is
+                // Cocoa's generic placeholder and hides the real cause — pull the
+                // StoreKitError case and/or the underlying NSError domain/code so the
+                // next report actually tells us what failed.
+                var detail = error.localizedDescription
+                if let skError = error as? StoreKitError {
+                    switch skError {
+                    case .unknown: detail = "StoreKitError.unknown"
+                    case .userCancelled: detail = "StoreKitError.userCancelled"
+                    case .networkError(let urlError):
+                        detail = "StoreKitError.networkError (URLError code \(urlError.code.rawValue): \(urlError.localizedDescription))"
+                    case .systemError(let underlying):
+                        let ns = underlying as NSError
+                        detail = "StoreKitError.systemError (\(ns.domain) code \(ns.code): \(ns.localizedDescription))"
+                    case .notAvailableInStorefront: detail = "StoreKitError.notAvailableInStorefront"
+                    case .notEntitled: detail = "StoreKitError.notEntitled"
+                    @unknown default:
+                        let ns = error as NSError
+                        detail = "StoreKitError.unknown-case (\(ns.domain) code \(ns.code))"
+                    }
+                } else {
+                    let ns = error as NSError
+                    detail = "\(ns.domain) code \(ns.code): \(ns.localizedDescription)"
+                }
+                print("Restore purchases failed: \(detail)")
                 DispatchQueue.main.async {
-                    let js = "window.handleStoreKitError?.({message: '\(error.localizedDescription)'})"
+                    let js = "window.handleStoreKitError?.({message: '\(detail)'})"
                     self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
                 }
-                call.reject("Restore failed: \(error.localizedDescription)")
+                call.reject("Restore failed: \(detail)")
             }
         }
     }
