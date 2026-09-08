@@ -207,7 +207,7 @@ export default function Paywall() {
       }
     } catch (err) {
       console.error("Restore validation error:", err);
-      setError("Failed to restore purchases. Please try again.");
+      setError(err.message ? `Failed to restore purchases: ${err.message}` : "Failed to restore purchases. Please try again.");
     } finally {
       setLoading(null);
     }
