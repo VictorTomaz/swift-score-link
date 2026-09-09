@@ -82,15 +82,34 @@ export default function Paywall() {
     }
   };
 
+  // Returns whether an active subscription was found, so callers doing a
+  // post-purchase reconciliation check (see handleSubscribe/handleRestore)
+  // know whether to update their own status message / redirect.
   const checkExistingSubscription = async () => {
     try {
       const response = await base44.functions.invoke('checkSubscriptionStatus', {});
       if (response.data.hasActiveSubscription) {
         setHasActiveSubscription(true);
         setIsTrial(response.data.isTrial || false);
+        return true;
       }
     } catch (error) {
       console.error("Failed to check subscription:", error);
+    }
+    return false;
+  };
+
+  // Called a few seconds after a purchase/restore attempt errored out or came
+  // back inactive — Apple already confirmed the purchase natively at that
+  // point, so if the DB (checked here) now shows it active, that's the real
+  // outcome (written by a retry, or by apple-webhook) and the screen shouldn't
+  // keep showing a stale error for a subscription that actually went through.
+  const reconcileAfterPurchaseAttempt = async () => {
+    const isActive = await checkExistingSubscription();
+    if (isActive) {
+      setError(null);
+      setStatusMessage("Subscription activated! Redirecting...");
+      setTimeout(() => navigate("/Dashboard"), 1500);
     }
   };
 
@@ -118,6 +137,12 @@ export default function Paywall() {
             setTimeout(() => navigate("/Dashboard"), 1500);
           } else {
             setError("Purchase validation failed. Please try restoring purchases.");
+            // Apple already confirmed the purchase natively at this point — if our
+            // own validation response says otherwise, the DB record (written by
+            // this call, a retry, or the apple-webhook) is the actual source of
+            // truth. Re-check it shortly so the screen doesn't stay stuck showing
+            // an error for a subscription that's actually active.
+            setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
           }
         } else if (result.status === 'cancelled') {
           console.log("User cancelled purchase flow.");
@@ -131,6 +156,10 @@ export default function Paywall() {
         const backendMessage = err?.response?.data?.error;
         console.error("StoreKit purchase error:", backendMessage || err.message, err);
         setError(backendMessage || err.message || "Unable to start purchase. Please try again.");
+        // Same reconciliation as above: the native purchase may well have
+        // succeeded even though this specific validation call errored out —
+        // don't leave the screen stuck on a stale error if the DB disagrees.
+        setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
       } finally {
         setLoading(null);
       }
@@ -207,6 +236,7 @@ export default function Paywall() {
         }
         if (!restored) {
           setError("No active subscription found to restore.");
+          setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
         }
       }
     } catch (err) {
@@ -219,6 +249,7 @@ export default function Paywall() {
       const detail = backendMessage || err.message;
       console.error("Restore validation error:", detail, err);
       setError(detail ? `Failed to restore purchases: ${detail}` : "Failed to restore purchases. Please try again.");
+      setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
     } finally {
       setLoading(null);
     }
@@ -231,7 +262,7 @@ export default function Paywall() {
       const result = await StoreKitPlugin.redeemOfferCode();
       if (result.status === 'success') {
         setStatusMessage("Redeem sheet opened. Checking subscription...");
-        setTimeout(() => checkExistingSubscription(), 5000);
+        setTimeout(() => reconcileAfterPurchaseAttempt(), 5000);
       }
     } catch (err) {
       console.error("Offer Code redemption error:", err);

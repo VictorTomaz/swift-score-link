@@ -1,11 +1,17 @@
 import Foundation
 import Capacitor
 import StoreKit
+import os.log
 
 @available(iOS 15.0, *)
 @objc(StoreKitPlugin)
 public class StoreKitPlugin: CAPPlugin {
     private let manager = StoreKitManager.shared
+    // Distinct subsystem so this shows up clearly in a device syslog export
+    // (plain print() doesn't reliably appear there — confirmed missing entirely
+    // from a real Sauce Labs device log while debugging a stuck-purchase-UI bug).
+    // Filter a pulled log with: grep '"SwiftScoreGolf.StoreKit"' or grep 'App(StoreKit-App)'.
+    private let log = Logger(subsystem: "com.base69bb019558d96a11fbfbddce.app", category: "StoreKit-App")
     
     override public func load() {
         super.load()
@@ -66,44 +72,56 @@ public class StoreKitPlugin: CAPPlugin {
     
     @objc func purchaseSubscription(_ call: CAPPluginCall) {
         guard let productId = call.getString("productId") else {
+            log.error("purchaseSubscription: rejected — productId missing from call")
             call.reject("productId is required")
             return
         }
-        
+
+        log.notice("purchaseSubscription: START productId=\(productId, privacy: .public)")
+
         Task {
             do {
                 let purchaseResult = try await manager.purchase(productId: productId)
+                log.notice("purchaseSubscription: manager.purchase() returned, case=\(String(describing: purchaseResult), privacy: .public)")
                 switch purchaseResult {
                 case .success(let verificationResult):
                     let receiptData = manager.getReceiptData() ?? ""
                     var jwsRepresentation = ""
                     var transactionId = ""
-                    
+
                     switch verificationResult {
                     case .verified(let transaction):
                         jwsRepresentation = verificationResult.jwsRepresentation
                         transactionId = String(transaction.id)
+                        log.notice("purchaseSubscription: VERIFIED transactionId=\(transactionId, privacy: .public) originalId=\(String(transaction.originalID), privacy: .public) jwsLength=\(jwsRepresentation.count) receiptDataLength=\(receiptData.count)")
                         await transaction.finish()
+                        log.notice("purchaseSubscription: transaction.finish() completed for transactionId=\(transactionId, privacy: .public)")
                     case .unverified(let transaction, let error):
                         jwsRepresentation = verificationResult.jwsRepresentation
                         transactionId = String(transaction.id)
-                        print("Unverified transaction: \(error.localizedDescription)")
+                        log.error("purchaseSubscription: UNVERIFIED transactionId=\(transactionId, privacy: .public) error=\(error.localizedDescription, privacy: .public) jwsLength=\(jwsRepresentation.count)")
                     }
-                    
+
+                    if jwsRepresentation.isEmpty {
+                        log.error("purchaseSubscription: WARNING — resolving success with EMPTY jwsRepresentation. Backend validation will fail (no jwsTransaction, no receiptData path). productId=\(productId, privacy: .public)")
+                    }
+
                     // Trigger compatibility callbacks
                     DispatchQueue.main.async {
                         let js = "window.handleStoreKitPurchaseSuccess?.('\(receiptData)')"
                         self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
                     }
-                    
+
+                    log.notice("purchaseSubscription: RESOLVING to JS — status=success transactionId=\(transactionId, privacy: .public) jwsLength=\(jwsRepresentation.count)")
                     call.resolve([
                         "status": "success",
                         "receiptData": receiptData,
                         "jwsTransaction": jwsRepresentation,
                         "transactionId": transactionId
                     ])
-                    
+
                 case .userCancelled:
+                    log.notice("purchaseSubscription: userCancelled productId=\(productId, privacy: .public)")
                     DispatchQueue.main.async {
                         let js = "window.handleStoreKitError?.({message: 'Purchase cancelled by user'})"
                         self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
@@ -112,8 +130,9 @@ public class StoreKitPlugin: CAPPlugin {
                         "status": "cancelled",
                         "message": "Purchase cancelled by user"
                     ])
-                    
+
                 case .pending:
+                    log.notice("purchaseSubscription: pending (parental/institutional approval) productId=\(productId, privacy: .public)")
                     DispatchQueue.main.async {
                         let js = "window.handleStoreKitError?.({message: 'Purchase is pending approval'})"
                         self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
@@ -122,11 +141,14 @@ public class StoreKitPlugin: CAPPlugin {
                         "status": "pending",
                         "message": "Purchase is pending approval"
                     ])
-                    
+
                 @unknown default:
+                    log.error("purchaseSubscription: @unknown default purchase result case, productId=\(productId, privacy: .public)")
                     call.reject("Unknown purchase result")
                 }
             } catch {
+                let ns = error as NSError
+                log.error("purchaseSubscription: THREW productId=\(productId, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code) description=\(error.localizedDescription, privacy: .public)")
                 DispatchQueue.main.async {
                     let js = "window.handleStoreKitError?.({message: '\(error.localizedDescription)'})"
                     self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
@@ -137,14 +159,18 @@ public class StoreKitPlugin: CAPPlugin {
     }
     
     @objc func restorePurchases(_ call: CAPPluginCall) {
+        log.notice("restorePurchases: START")
         Task {
             do {
                 try await manager.restorePurchases()
+                log.notice("restorePurchases: manager.restorePurchases() (AppStore.sync()) completed")
                 let receiptData = manager.getReceiptData() ?? ""
 
                 let activeEntitlements = await manager.getActiveEntitlementsWithJWS()
+                log.notice("restorePurchases: found \(activeEntitlements.count) active entitlement(s)")
                 let entitlementsList = activeEntitlements.map { entry -> [String: Any] in
                     let (transaction, jws) = entry
+                    log.notice("restorePurchases: entitlement productId=\(transaction.productID, privacy: .public) transactionId=\(String(transaction.id), privacy: .public) jwsLength=\(jws.count)")
                     return [
                         "productId": transaction.productID,
                         "transactionId": String(transaction.id),
@@ -153,12 +179,13 @@ public class StoreKitPlugin: CAPPlugin {
                         "jwsTransaction": jws
                     ]
                 }
-                
+
                 DispatchQueue.main.async {
                     let js = "window.handleStoreKitRestoreSuccess?.('\(receiptData)')"
                     self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
                 }
-                
+
+                log.notice("restorePurchases: RESOLVING to JS — status=success entitlementCount=\(entitlementsList.count)")
                 call.resolve([
                     "status": "success",
                     "receiptData": receiptData,
@@ -189,7 +216,7 @@ public class StoreKitPlugin: CAPPlugin {
                     let ns = error as NSError
                     detail = "\(ns.domain) code \(ns.code): \(ns.localizedDescription)"
                 }
-                print("Restore purchases failed: \(detail)")
+                log.error("restorePurchases: FAILED \(detail, privacy: .public)")
                 DispatchQueue.main.async {
                     let js = "window.handleStoreKitError?.({message: '\(detail)'})"
                     self.bridge?.webView?.evaluateJavaScript(js, completionHandler: nil)
