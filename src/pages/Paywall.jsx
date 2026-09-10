@@ -31,6 +31,44 @@ async function deviceLog(message, level = "notice") {
   } catch (_e) { /* noop */ }
 }
 
+// Primary purchase-validation path on native iOS. Deliberately NOT the base44
+// SDK: a real device test (Sauce Labs, 2026-09-10) showed the SDK — and even a
+// plain fetch — receiving a stale 400 body ("receiptData and productId
+// required") that the live backend can no longer produce for ANY input,
+// pointing at an HTTP cache between the app and Cloudflare. This forces a fresh
+// request every time: unique URL, cache:'no-store', explicit no-cache headers.
+// Returns { data } like the SDK; throws an axios-shaped error (err.response =
+// { status, data }) on an HTTP error so existing handling still works.
+async function validateReceiptViaFetch({ jwsTransaction, receiptData, productId }) {
+  const nonce = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const url = `${BASE44_SERVER_URL}/api/apps/${BASE44_APP_ID}/functions/validateAppleReceipt?_cb=${nonce}`;
+  const res = await fetch(url, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "Pragma": "no-cache",
+      ...(appParams.token ? { Authorization: `Bearer ${appParams.token}` } : {}),
+    },
+    body: JSON.stringify({
+      receiptData: receiptData || "",
+      jwsTransaction: jwsTransaction || "",
+      productId,
+    }),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_e) { data = { error: text }; }
+  if (!res.ok) {
+    const err = new Error(data?.error || `HTTP ${res.status}`);
+    err.response = { status: res.status, data };
+    err.viaFetch = true;
+    throw err;
+  }
+  return { data, _status: res.status, _type: res.type, _url: res.url };
+}
+
 export default function Paywall() {
   const navigate = useNavigate();
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
@@ -158,63 +196,62 @@ export default function Paywall() {
           const jws = result.jwsTransaction || '';
           const rcpt = result.receiptData || '';
 
-          // --- Raw fetch probe: bypasses the base44 SDK/axios entirely and
-          // forbids any cached response. If this returns the CURRENT backend
-          // error but the SDK call returns the ancient "receiptData and
-          // productId required" string, the stale response is coming from an
-          // axios/HTTP cache, not the live backend. ---
+          // Control call: a DIFFERENT backend function, same SDK/origin/auth.
+          // If this returns fresh data but validateAppleReceipt below returns a
+          // stale body, the problem is per-endpoint HTTP response caching.
           try {
-            const probeUrl = `${BASE44_SERVER_URL}/api/apps/${BASE44_APP_ID}/functions/validateAppleReceipt?_cb=${Date.now()}`;
-            const probeRes = await fetch(probeUrl, {
-              method: 'POST',
-              cache: 'no-store',
-              headers: {
-                'Content-Type': 'application/json',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                ...(appParams.token ? { Authorization: `Bearer ${appParams.token}` } : {}),
-              },
-              body: JSON.stringify({ receiptData: rcpt, jwsTransaction: jws, productId }),
-            });
-            const probeBody = await probeRes.text();
-            const h = probeRes.headers;
+            const ctl = await base44.functions.invoke('checkSubscriptionStatus', {});
+            await deviceLog(`control checkSubscriptionStatus OK: data=${JSON.stringify(ctl?.data)?.slice(0, 200)}`);
+          } catch (ctlErr) {
             await deviceLog(
-              `validateAppleReceipt PROBE: status=${probeRes.status} ` +
-              `age=${h.get('age')} x-cache=${h.get('x-cache')} cf-cache-status=${h.get('cf-cache-status')} ` +
-              `cache-control=${h.get('cache-control')} date=${h.get('date')} ` +
-              `body=${probeBody.slice(0, 350)}`,
-              probeRes.ok ? 'notice' : 'error'
+              `control checkSubscriptionStatus ERROR: status=${ctlErr?.response?.status} ` +
+              `body=${JSON.stringify(ctlErr?.response?.data)?.slice(0, 160)}`,
+              'error'
             );
-          } catch (probeErr) {
-            await deviceLog(`validateAppleReceipt PROBE threw: ${probeErr?.message || probeErr}`, 'error');
           }
 
           await deviceLog(
-            `validateAppleReceipt: calling base44 SDK. productId=${productId} ` +
-            `hasJws=${!!jws} jwsLen=${jws.length} hasReceipt=${!!rcpt} receiptLen=${rcpt.length} ` +
-            `online=${typeof navigator !== 'undefined' ? navigator.onLine : 'n/a'}`
+            `validateAppleReceipt: START. productId=${productId} hasJws=${!!jws} jwsLen=${jws.length} ` +
+            `hasReceipt=${!!rcpt} receiptLen=${rcpt.length} online=${typeof navigator !== 'undefined' ? navigator.onLine : 'n/a'}`
           );
 
           let response;
           try {
-            response = await base44.functions.invoke('validateAppleReceipt', {
-              receiptData: result.receiptData,
-              jwsTransaction: result.jwsTransaction,
-              productId: productId,
-            });
-            await deviceLog(`validateAppleReceipt SDK ok: data=${JSON.stringify(response?.data)?.slice(0, 450)}`);
-          } catch (invokeErr) {
-            const r = invokeErr?.response;
+            // PRIMARY: cache-proof raw fetch (see validateReceiptViaFetch comment).
+            response = await validateReceiptViaFetch({ jwsTransaction: jws, receiptData: rcpt, productId });
             await deviceLog(
-              `validateAppleReceipt SDK ERROR: msg=${invokeErr?.message} code=${invokeErr?.code} ` +
-              `respStatus=${r?.status} gotResponse=${!!r} gotRequest=${!!invokeErr?.request} ` +
-              `url=${invokeErr?.config?.url} method=${invokeErr?.config?.method} ` +
-              `respBody=${JSON.stringify(r?.data)?.slice(0, 300)} ` +
-              `age=${r?.headers?.age} x-cache=${r?.headers?.['x-cache']} ` +
-              `cf-cache-status=${r?.headers?.['cf-cache-status']} date=${r?.headers?.date}`,
-              'error'
+              `validateAppleReceipt via fetch OK: type=${response._type} url=${response._url} ` +
+              `data=${JSON.stringify(response?.data)?.slice(0, 450)}`
             );
-            throw invokeErr;
+          } catch (fetchErr) {
+            if (fetchErr?.response) {
+              // Real HTTP error response from the fetch path. The SDK hits the
+              // exact same endpoint, so don't retry it — log and rethrow.
+              await deviceLog(
+                `validateAppleReceipt via fetch HTTP ERROR: status=${fetchErr.response.status} ` +
+                `body=${JSON.stringify(fetchErr.response.data)?.slice(0, 300)}`,
+                'error'
+              );
+              throw fetchErr;
+            }
+            // Network-level failure (no response at all) — fall back to the SDK once.
+            await deviceLog(`validateAppleReceipt via fetch NETWORK FAIL: ${fetchErr?.message}. Falling back to SDK.`, 'error');
+            try {
+              response = await base44.functions.invoke('validateAppleReceipt', {
+                receiptData: result.receiptData,
+                jwsTransaction: result.jwsTransaction,
+                productId: productId,
+              });
+              await deviceLog(`validateAppleReceipt SDK fallback OK: data=${JSON.stringify(response?.data)?.slice(0, 450)}`);
+            } catch (invokeErr) {
+              const r = invokeErr?.response;
+              await deviceLog(
+                `validateAppleReceipt SDK fallback ERROR: msg=${invokeErr?.message} respStatus=${r?.status} ` +
+                `body=${JSON.stringify(r?.data)?.slice(0, 300)}`,
+                'error'
+              );
+              throw invokeErr;
+            }
           }
 
           if (response.data.valid && response.data.isActive) {
@@ -312,11 +349,14 @@ export default function Paywall() {
         // Verifica cada entitlement ativo via JWS (StoreKit 2), mesmo caminho
         // usado na compra — evita depender da API legada verifyReceipt.
         const entitlements = (result.entitlements || []).filter(ent => ent.jwsTransaction);
+        await deviceLog(`handleRestore: ${entitlements.length} entitlement(s) with JWS to validate`);
         for (const ent of entitlements) {
-          const response = await base44.functions.invoke('validateAppleReceipt', {
+          // Same cache-proof path as the purchase flow.
+          const response = await validateReceiptViaFetch({
             jwsTransaction: ent.jwsTransaction,
             productId: ent.productId,
           });
+          await deviceLog(`handleRestore: validate ${ent.productId} -> ${JSON.stringify(response?.data)?.slice(0, 250)}`);
           if (response.data.valid && response.data.isActive) {
             setHasActiveSubscription(true);
             setIsTrial(response.data.isTrial || false);

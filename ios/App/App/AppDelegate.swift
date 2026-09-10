@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import WebKit
 import os.log
 #if DEBUG
 import StoreKitTest
@@ -16,18 +17,33 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
 
-        // Cache-busting for build 8 diagnostics: fully disable the shared HTTP
-        // response cache. The WKWebView's fetch()/XHR go through the URL loading
-        // system, and we suspect a stale cached 400 body ("receiptData and
-        // productId required" — a string that only ever existed in the very first
-        // backend version) was being replayed for validateAppleReceipt instead
-        // of a fresh network round-trip. Zero-capacity cache => every request
-        // hits the network.
+        // Cache-busting (build 8 + 9). We saw a stale 400 body ("receiptData and
+        // productId required" — a string that only existed in the very first
+        // backend version) replayed for validateAppleReceipt instead of a fresh
+        // round-trip. Two layers:
+        //  1) URLCache.shared -> zero capacity (covers plain URLSession).
         let noCache = URLCache(memoryCapacity: 0, diskCapacity: 0, diskPath: nil)
         URLCache.shared = noCache
         URLCache.shared.removeAllCachedResponses()
-        Logger(subsystem: "com.base69bb019558d96a11fbfbddce.app", category: "StoreKit-App")
-            .notice("AppDelegate: URLCache disabled (memory=0 disk=0) and cleared for build-8 diagnostics")
+        let ssgLog = Logger(subsystem: "com.base69bb019558d96a11fbfbddce.app", category: "StoreKit-App")
+        ssgLog.notice("AppDelegate: URLCache disabled (memory=0 disk=0) and cleared")
+
+        //  2) WKWebView has its OWN cache (WKWebsiteDataStore), NOT covered by
+        //     URLCache.shared. Wipe the HTTP/fetch caches on every launch —
+        //     but NOT cookies / localStorage / IndexedDB, so the user stays
+        //     logged in. Runs before Capacitor creates the web view.
+        let webCacheTypes: Set<String> = [
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+            WKWebsiteDataTypeOfflineWebApplicationCache,
+            WKWebsiteDataTypeFetchCache,
+        ]
+        WKWebsiteDataStore.default().removeData(
+            ofTypes: webCacheTypes,
+            modifiedSince: Date(timeIntervalSince1970: 0)
+        ) {
+            ssgLog.notice("AppDelegate: WKWebsiteDataStore HTTP/fetch caches cleared")
+        }
 
         #if DEBUG
         // Local StoreKit testing (Debug builds only). Resolves XCTest.framework
