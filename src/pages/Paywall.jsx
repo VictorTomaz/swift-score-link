@@ -6,8 +6,30 @@ import { Star, Trophy, Shield, Mail, TrendingUp, Zap, DollarSign, Target } from 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { appParams } from "@/lib/app-params";
 
 const StoreKitPlugin = registerPlugin("StoreKitPlugin");
+
+// Must match src/api/base44Client.js — used by the raw fetch() diagnostic probe.
+const BASE44_APP_ID = "69bb019558d96a11fbfbddce";
+const BASE44_SERVER_URL = "https://swift-score-link.base44.app";
+
+// Bridges a diagnostic line into the device's unified log (os.log) via the
+// native StoreKit plugin. Plain console.log from the WKWebView does NOT appear
+// in a device syslog / sysdiagnose export — this does, as:
+//   App[<pid>] <Notice>: JS: <message>
+// Greppable by "JS: ". Fire-and-forget; never throws.
+async function deviceLog(message, level = "notice") {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  try {
+    (level === "error" ? console.error : console.log)("[SSG]", line);
+  } catch (_e) { /* noop */ }
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await StoreKitPlugin.nativeLog({ message: String(line).slice(0, 1200), level });
+    }
+  } catch (_e) { /* noop */ }
+}
 
 export default function Paywall() {
   const navigate = useNavigate();
@@ -121,15 +143,80 @@ export default function Paywall() {
     if (isIOSNative) {
       const productId = planType === 'yearly' ? 'com.swiftscoregolf.yearly' : 'com.swiftscoregolf.monthly';
       iosProductIdRef.current = productId;
+      await deviceLog(`handleSubscribe: START native flow planType=${planType} productId=${productId}`);
       try {
         const result = await StoreKitPlugin.purchaseSubscription({ productId });
+        await deviceLog(
+          `handleSubscribe: purchaseSubscription resolved. status=${result?.status} ` +
+          `hasJws=${!!result?.jwsTransaction} jwsLen=${(result?.jwsTransaction || '').length} ` +
+          `hasReceipt=${!!result?.receiptData} receiptLen=${(result?.receiptData || '').length} ` +
+          `txId=${result?.transactionId || 'n/a'}`
+        );
         if (result.status === 'success') {
           setStatusMessage("Validating purchase with App Store...");
-          const response = await base44.functions.invoke('validateAppleReceipt', {
-            receiptData: result.receiptData,
-            jwsTransaction: result.jwsTransaction,
-            productId: productId,
-          });
+
+          const jws = result.jwsTransaction || '';
+          const rcpt = result.receiptData || '';
+
+          // --- Raw fetch probe: bypasses the base44 SDK/axios entirely and
+          // forbids any cached response. If this returns the CURRENT backend
+          // error but the SDK call returns the ancient "receiptData and
+          // productId required" string, the stale response is coming from an
+          // axios/HTTP cache, not the live backend. ---
+          try {
+            const probeUrl = `${BASE44_SERVER_URL}/api/apps/${BASE44_APP_ID}/functions/validateAppleReceipt?_cb=${Date.now()}`;
+            const probeRes = await fetch(probeUrl, {
+              method: 'POST',
+              cache: 'no-store',
+              headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                ...(appParams.token ? { Authorization: `Bearer ${appParams.token}` } : {}),
+              },
+              body: JSON.stringify({ receiptData: rcpt, jwsTransaction: jws, productId }),
+            });
+            const probeBody = await probeRes.text();
+            const h = probeRes.headers;
+            await deviceLog(
+              `validateAppleReceipt PROBE: status=${probeRes.status} ` +
+              `age=${h.get('age')} x-cache=${h.get('x-cache')} cf-cache-status=${h.get('cf-cache-status')} ` +
+              `cache-control=${h.get('cache-control')} date=${h.get('date')} ` +
+              `body=${probeBody.slice(0, 350)}`,
+              probeRes.ok ? 'notice' : 'error'
+            );
+          } catch (probeErr) {
+            await deviceLog(`validateAppleReceipt PROBE threw: ${probeErr?.message || probeErr}`, 'error');
+          }
+
+          await deviceLog(
+            `validateAppleReceipt: calling base44 SDK. productId=${productId} ` +
+            `hasJws=${!!jws} jwsLen=${jws.length} hasReceipt=${!!rcpt} receiptLen=${rcpt.length} ` +
+            `online=${typeof navigator !== 'undefined' ? navigator.onLine : 'n/a'}`
+          );
+
+          let response;
+          try {
+            response = await base44.functions.invoke('validateAppleReceipt', {
+              receiptData: result.receiptData,
+              jwsTransaction: result.jwsTransaction,
+              productId: productId,
+            });
+            await deviceLog(`validateAppleReceipt SDK ok: data=${JSON.stringify(response?.data)?.slice(0, 450)}`);
+          } catch (invokeErr) {
+            const r = invokeErr?.response;
+            await deviceLog(
+              `validateAppleReceipt SDK ERROR: msg=${invokeErr?.message} code=${invokeErr?.code} ` +
+              `respStatus=${r?.status} gotResponse=${!!r} gotRequest=${!!invokeErr?.request} ` +
+              `url=${invokeErr?.config?.url} method=${invokeErr?.config?.method} ` +
+              `respBody=${JSON.stringify(r?.data)?.slice(0, 300)} ` +
+              `age=${r?.headers?.age} x-cache=${r?.headers?.['x-cache']} ` +
+              `cf-cache-status=${r?.headers?.['cf-cache-status']} date=${r?.headers?.date}`,
+              'error'
+            );
+            throw invokeErr;
+          }
+
           if (response.data.valid && response.data.isActive) {
             setHasActiveSubscription(true);
             setIsTrial(response.data.isTrial || false);
@@ -154,6 +241,11 @@ export default function Paywall() {
         // code 400" — the actual cause is in the response body our backend
         // functions send back (validateAppleReceipt's console.error'd errors).
         const backendMessage = err?.response?.data?.error;
+        await deviceLog(
+          `handleSubscribe: CATCH — backendMessage=${JSON.stringify(backendMessage)} ` +
+          `errMsg=${err?.message} respStatus=${err?.response?.status}`,
+          'error'
+        );
         console.error("StoreKit purchase error:", backendMessage || err.message, err);
         setError(backendMessage || err.message || "Unable to start purchase. Please try again.");
         // Same reconciliation as above: the native purchase may well have

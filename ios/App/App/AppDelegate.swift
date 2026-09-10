@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import os.log
 #if DEBUG
 import StoreKitTest
 #endif
@@ -14,6 +15,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
+
+        // Cache-busting for build 8 diagnostics: fully disable the shared HTTP
+        // response cache. The WKWebView's fetch()/XHR go through the URL loading
+        // system, and we suspect a stale cached 400 body ("receiptData and
+        // productId required" — a string that only ever existed in the very first
+        // backend version) was being replayed for validateAppleReceipt instead
+        // of a fresh network round-trip. Zero-capacity cache => every request
+        // hits the network.
+        let noCache = URLCache(memoryCapacity: 0, diskCapacity: 0, diskPath: nil)
+        URLCache.shared = noCache
+        URLCache.shared.removeAllCachedResponses()
+        Logger(subsystem: "com.base69bb019558d96a11fbfbddce.app", category: "StoreKit-App")
+            .notice("AppDelegate: URLCache disabled (memory=0 disk=0) and cleared for build-8 diagnostics")
+
         #if DEBUG
         // Local StoreKit testing (Debug builds only). Resolves XCTest.framework
         // at runtime via LD_RUNPATH_SEARCH_PATHS (Debug-only build setting) instead

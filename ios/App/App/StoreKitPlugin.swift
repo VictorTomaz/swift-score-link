@@ -35,6 +35,23 @@ public class StoreKitPlugin: CAPPlugin {
         }
     }
     
+    // Bridge for the web layer to write into the device's unified log (os.log).
+    // Plain console.log / print() from the WKWebView do NOT appear in a device
+    // syslog export — confirmed repeatedly while debugging the purchase flow.
+    // JS calls StoreKitPlugin.nativeLog({ message, level }) and it shows up as
+    //   App[<pid>] <Notice>: JS: <message>
+    // in a sysdiagnose / Console export, greppable by "JS: ".
+    @objc func nativeLog(_ call: CAPPluginCall) {
+        let msg = call.getString("message") ?? "(empty)"
+        let level = call.getString("level") ?? "notice"
+        if level == "error" {
+            log.error("JS: \(msg, privacy: .public)")
+        } else {
+            log.notice("JS: \(msg, privacy: .public)")
+        }
+        call.resolve()
+    }
+
     @objc func getProducts(_ call: CAPPluginCall) {
         Task {
             do {
