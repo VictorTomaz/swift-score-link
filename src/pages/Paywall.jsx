@@ -9,13 +9,25 @@ import { Capacitor, registerPlugin } from "@capacitor/core";
 
 const StoreKitPlugin = registerPlugin("StoreKitPlugin");
 
+// On-screen debug trail, so a tester can copy/paste the full trace without
+// needing a USB connection + Console.app / sysdiagnose. TEMPORARY diagnostic
+// aid while chasing the validateAppleReceipt 400 — remove (or gate behind a
+// dev flag) before a real public release; regular users shouldn't see this.
+// Module-level so deviceLog() (called from a plain async function, not a React
+// hook) can append to it; the component copies it into state after each
+// purchase/restore attempt settles.
+const debugBuffer = [];
+
 // Bridges a diagnostic line into the device's unified log (os.log) via the
-// native StoreKit plugin. Plain console.log from the WKWebView does NOT appear
-// in a device syslog / sysdiagnose export — this does, as:
+// native StoreKit plugin, AND into the on-screen debug buffer above. Plain
+// console.log from the WKWebView does NOT appear in a device syslog /
+// sysdiagnose export — this does, as:
 //   App[<pid>] <Notice>: JS: <message>
 // Greppable by "JS: ". Fire-and-forget; never throws.
 async function deviceLog(message, level = "notice") {
-  const line = `[${new Date().toISOString()}] ${message}`;
+  const line = `[${new Date().toISOString()}] ${level === "error" ? "ERROR " : ""}${message}`;
+  debugBuffer.push(line);
+  if (debugBuffer.length > 200) debugBuffer.shift();
   try {
     (level === "error" ? console.error : console.log)("[SSG]", line);
   } catch (_e) { /* noop */ }
@@ -80,6 +92,25 @@ export default function Paywall() {
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
   const [storeKitProducts, setStoreKitProducts] = useState([]);
+  // On-screen copy of debugBuffer (see comment above deviceLog) — TEMPORARY,
+  // remove before public release.
+  const [debugLog, setDebugLog] = useState([]);
+  const [showDebugLog, setShowDebugLog] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(null);
+  const syncDebugLog = () => {
+    setDebugLog(debugBuffer.slice(-80));
+    setShowDebugLog(true); // auto-expand once there's something to see
+  };
+  const copyDebugLog = async () => {
+    const text = debugLog.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyFeedback('Log copiado!');
+    } catch (_e) {
+      setCopyFeedback('Não foi possível copiar automaticamente — selecione o texto manualmente.');
+    }
+    setTimeout(() => setCopyFeedback(null), 2500);
+  };
 
   const iosProductIdRef = useRef(null);
 
@@ -314,6 +345,7 @@ export default function Paywall() {
         reconcileAfterPurchaseAttempt();
       } finally {
         setLoading(null);
+        syncDebugLog();
       }
       return;
     }
@@ -409,6 +441,7 @@ export default function Paywall() {
       reconcileAfterPurchaseAttempt();
     } finally {
       setLoading(null);
+      syncDebugLog();
     }
   };
 
@@ -529,6 +562,38 @@ export default function Paywall() {
         {error && (
           <div className="text-center p-4 rounded-lg bg-destructive/10 border border-destructive/20">
             <p className="text-sm font-medium text-destructive">{error}</p>
+          </div>
+        )}
+
+        {/* TEMPORARY on-screen debug trail — lets a tester copy/paste the full
+            trace without a USB connection. Remove before public release. */}
+        {debugLog.length > 0 && (
+          <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowDebugLog((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground"
+            >
+              <span>Log técnico ({debugLog.length} linhas)</span>
+              <span>{showDebugLog ? "Ocultar ▲" : "Mostrar ▼"}</span>
+            </button>
+            {showDebugLog && (
+              <div className="px-3 pb-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={copyDebugLog}>
+                    Copiar log
+                  </Button>
+                  {copyFeedback && (
+                    <span className="text-xs text-muted-foreground">{copyFeedback}</span>
+                  )}
+                </div>
+                <pre
+                  className="text-[10px] leading-snug font-mono whitespace-pre-wrap break-all max-h-64 overflow-y-auto select-text bg-background/60 rounded p-2 border border-border"
+                >
+                  {debugLog.join("\n")}
+                </pre>
+              </div>
+            )}
           </div>
         )}
 
