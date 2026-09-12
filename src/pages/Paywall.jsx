@@ -6,13 +6,8 @@ import { Star, Trophy, Shield, Mail, TrendingUp, Zap, DollarSign, Target } from 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Capacitor, registerPlugin } from "@capacitor/core";
-import { appParams } from "@/lib/app-params";
 
 const StoreKitPlugin = registerPlugin("StoreKitPlugin");
-
-// Must match src/api/base44Client.js — used by the raw fetch() diagnostic probe.
-const BASE44_APP_ID = "69bb019558d96a11fbfbddce";
-const BASE44_SERVER_URL = "https://swift-score-link.base44.app";
 
 // Bridges a diagnostic line into the device's unified log (os.log) via the
 // native StoreKit plugin. Plain console.log from the WKWebView does NOT appear
@@ -31,25 +26,33 @@ async function deviceLog(message, level = "notice") {
   } catch (_e) { /* noop */ }
 }
 
-// Primary purchase-validation path on native iOS. Deliberately NOT the base44
-// SDK: a real device test (Sauce Labs, 2026-09-10) showed the SDK — and even a
-// plain fetch — receiving a stale 400 body ("receiptData and productId
-// required") that the live backend can no longer produce for ANY input,
-// pointing at an HTTP cache between the app and Cloudflare. This forces a fresh
-// request every time: unique URL, cache:'no-store', explicit no-cache headers.
+// Primary purchase-validation path on native iOS. Uses base44.functions.fetch()
+// — the SDK's own raw-fetch helper — instead of a hand-rolled fetch(). Why this
+// matters: our earlier hand-rolled version read the auth token from
+// `appParams.token`, a ONE-TIME snapshot taken when the page/module first
+// loaded. The SDK itself never does that — base44.functions.invoke() resolves
+// the Authorization header fresh on every call via getAccessToken(), which
+// re-reads localStorage live. If the stored token is refreshed/rotated any
+// time after that initial snapshot (very plausible across the 30-90s a real
+// purchase spends in Apple's native sign-in UI), our own fetch would keep
+// sending the stale one while the SDK sends the current one — and a real
+// device test (2026-09-11) showed exactly a bare "Request failed with status
+// code 400" with NO matching IapErrorLog row, meaning the request never even
+// reached our function code: consistent with rejection at Base44's auth layer
+// before our handler runs. base44.functions.fetch() gives us the SDK's
+// always-current auth headers while still being real fetch (so cache:'no-store'
+// + a unique query keep working as a cache-buster).
 // Returns { data } like the SDK; throws an axios-shaped error (err.response =
 // { status, data }) on an HTTP error so existing handling still works.
 async function validateReceiptViaFetch({ jwsTransaction, receiptData, productId }) {
   const nonce = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const url = `${BASE44_SERVER_URL}/api/apps/${BASE44_APP_ID}/functions/validateAppleReceipt?_cb=${nonce}`;
-  const res = await fetch(url, {
+  const res = await base44.functions.fetch(`/validateAppleReceipt?_cb=${nonce}`, {
     method: "POST",
     cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       "Cache-Control": "no-cache, no-store, must-revalidate",
       "Pragma": "no-cache",
-      ...(appParams.token ? { Authorization: `Bearer ${appParams.token}` } : {}),
     },
     body: JSON.stringify({
       receiptData: receiptData || "",
@@ -159,18 +162,37 @@ export default function Paywall() {
     return false;
   };
 
-  // Called a few seconds after a purchase/restore attempt errored out or came
-  // back inactive — Apple already confirmed the purchase natively at that
-  // point, so if the DB (checked here) now shows it active, that's the real
-  // outcome (written by a retry, or by apple-webhook) and the screen shouldn't
-  // keep showing a stale error for a subscription that actually went through.
-  const reconcileAfterPurchaseAttempt = async () => {
-    const isActive = await checkExistingSubscription();
-    if (isActive) {
-      setError(null);
-      setStatusMessage("Subscription activated! Redirecting...");
-      setTimeout(() => navigate("/Dashboard"), 1500);
+  // Called after a purchase/restore attempt errored out or came back inactive
+  // — Apple already confirmed the purchase natively at that point, so if the
+  // DB (checked here) now shows it active, that's the real outcome (written by
+  // a retry, or by the apple-webhook server-to-server notification) and the
+  // screen shouldn't keep showing a stale error for a subscription that
+  // actually went through.
+  //
+  // This POLLS instead of checking once: a real device test (2026-09-11) got
+  // stuck showing the error because the webhook took longer than the old
+  // single 4s check to land — the DB was correct by the time the user looked,
+  // but nothing ever re-checked. Poll every `intervalMs` for up to `maxWaitMs`
+  // after `initialDelayMs`, so a slow webhook still gets picked up.
+  const reconcileAfterPurchaseAttempt = async ({ initialDelayMs = 4000, intervalMs = 5000, maxWaitMs = 60000 } = {}) => {
+    await deviceLog(`reconcileAfterPurchaseAttempt: starting (initialDelay=${initialDelayMs} interval=${intervalMs} maxWait=${maxWaitMs})`);
+    await new Promise((resolve) => setTimeout(resolve, initialDelayMs));
+    const deadline = Date.now() + maxWaitMs;
+    let attempt = 0;
+    while (Date.now() < deadline) {
+      attempt += 1;
+      const isActive = await checkExistingSubscription();
+      if (isActive) {
+        await deviceLog(`reconcileAfterPurchaseAttempt: found active on attempt ${attempt}`);
+        setError(null);
+        setStatusMessage("Subscription activated! Redirecting...");
+        setTimeout(() => navigate("/Dashboard"), 1500);
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
+    await deviceLog(`reconcileAfterPurchaseAttempt: gave up after ${attempt} attempt(s), still not active`, 'error');
+    return false;
   };
 
   const handleSubscribe = async (planType) => {
@@ -260,13 +282,13 @@ export default function Paywall() {
             setStatusMessage("Subscription activated! Redirecting...");
             setTimeout(() => navigate("/Dashboard"), 1500);
           } else {
+            setStatusMessage(null);
             setError("Purchase validation failed. Please try restoring purchases.");
             // Apple already confirmed the purchase natively at this point — if our
             // own validation response says otherwise, the DB record (written by
             // this call, a retry, or the apple-webhook) is the actual source of
-            // truth. Re-check it shortly so the screen doesn't stay stuck showing
-            // an error for a subscription that's actually active.
-            setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
+            // truth. Poll for it instead of a single check (see comment above).
+            reconcileAfterPurchaseAttempt();
           }
         } else if (result.status === 'cancelled') {
           console.log("User cancelled purchase flow.");
@@ -284,11 +306,12 @@ export default function Paywall() {
           'error'
         );
         console.error("StoreKit purchase error:", backendMessage || err.message, err);
+        setStatusMessage(null);
         setError(backendMessage || err.message || "Unable to start purchase. Please try again.");
         // Same reconciliation as above: the native purchase may well have
         // succeeded even though this specific validation call errored out —
         // don't leave the screen stuck on a stale error if the DB disagrees.
-        setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
+        reconcileAfterPurchaseAttempt();
       } finally {
         setLoading(null);
       }
@@ -367,8 +390,9 @@ export default function Paywall() {
           }
         }
         if (!restored) {
+          setStatusMessage(null);
           setError("No active subscription found to restore.");
-          setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
+          reconcileAfterPurchaseAttempt();
         }
       }
     } catch (err) {
@@ -380,8 +404,9 @@ export default function Paywall() {
       const backendMessage = err?.response?.data?.error;
       const detail = backendMessage || err.message;
       console.error("Restore validation error:", detail, err);
+      setStatusMessage(null);
       setError(detail ? `Failed to restore purchases: ${detail}` : "Failed to restore purchases. Please try again.");
-      setTimeout(() => reconcileAfterPurchaseAttempt(), 4000);
+      reconcileAfterPurchaseAttempt();
     } finally {
       setLoading(null);
     }
@@ -394,10 +419,11 @@ export default function Paywall() {
       const result = await StoreKitPlugin.redeemOfferCode();
       if (result.status === 'success') {
         setStatusMessage("Redeem sheet opened. Checking subscription...");
-        setTimeout(() => reconcileAfterPurchaseAttempt(), 5000);
+        reconcileAfterPurchaseAttempt({ initialDelayMs: 5000 });
       }
     } catch (err) {
       console.error("Offer Code redemption error:", err);
+      setStatusMessage(null);
       setError(err.message || "Failed to launch Offer Code redemption.");
     } finally {
       setLoading(null);
