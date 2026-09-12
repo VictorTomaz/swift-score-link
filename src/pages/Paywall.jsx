@@ -6,6 +6,7 @@ import { Star, Trophy, Shield, Mail, TrendingUp, Zap, DollarSign, Target } from 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { useAuth } from "@/lib/AuthContext";
 
 const StoreKitPlugin = registerPlugin("StoreKitPlugin");
 
@@ -86,6 +87,7 @@ async function validateReceiptViaFetch({ jwsTransaction, receiptData, productId 
 
 export default function Paywall() {
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
   const [isTrial, setIsTrial] = useState(false);
   const [loading, setLoading] = useState(null);
@@ -693,6 +695,24 @@ export default function Paywall() {
           <a href="/TermsAndPrivacy" className="hover:text-foreground underline">
             Privacy Policy
           </a>
+        </div>
+
+        {/* Sign Out — the only entry point a free/non-subscribed user has to
+            reach this action. /Settings' own "Sign Out" button was already
+            correct, but that page requires an active subscription to open at
+            all, so a free user had no path to it (the bottom nav bar that
+            links to Settings only renders on subscription-gated pages).
+            Reuses AuthContext's existing logout() unchanged — on native it
+            clears the local token and navigates internally to /#/login
+            (never leaves the app / no external redirect needed). */}
+        <div className="flex items-center justify-center">
+          <button
+            type="button"
+            onClick={logout}
+            className="text-xs text-muted-foreground hover:text-foreground underline"
+          >
+            Sign Out
+          </button>
         </div>
 
         {/* Back Button */}
