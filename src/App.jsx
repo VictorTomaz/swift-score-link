@@ -88,7 +88,7 @@ const AuthenticatedApp = () => {
         <Route path="/login" element={<NativeLogin />} />
         <Route path="/auth-callback" element={<AuthCallback />} />
 
-        {/* Protected routes — must be logged in */}
+        {/* Protected routes — must be logged in AND have an active subscription/trial */}
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<Navigate to="/Dashboard" replace />} />
@@ -101,10 +101,18 @@ const AuthenticatedApp = () => {
             <Route path="/PlayersManagement" element={<PlayersManagement />} />
             <Route path="/Help" element={<Help />} />
             <Route path="/Faq" element={<Faq />} />
-            <Route path="/Settings" element={<Settings />} />
             <Route path="/TournamentLogistics" element={<TournamentLogistics />} />
             <Route path="/TournamentResults" element={<TournamentResults />} />
             <Route path="/TournamentHub" element={<TournamentHub />} />
+          </Route>
+        </Route>
+
+        {/* Logged-in but NOT subscription-gated: Settings holds the only
+            "Sign Out" control in the app, so any authenticated user — free,
+            trialing, or subscribed — must be able to reach it. */}
+        <Route element={<ProtectedRoute requireSubscription={false} />}>
+          <Route element={<AppLayout />}>
+            <Route path="/Settings" element={<Settings />} />
           </Route>
         </Route>
 
