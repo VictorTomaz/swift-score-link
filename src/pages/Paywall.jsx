@@ -157,6 +157,14 @@ export default function Paywall() {
   const isIOSNative = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios';
 
   useEffect(() => {
+    // One-shot diagnostic for the 400 "receiptData and productId required"
+    // bug (2026-09-13): confirms whether THIS device has a stale
+    // Base44-Functions-Version pinned in localStorage (see base44Client.js
+    // comment for the full mechanism). Safe to remove once confirmed.
+    try {
+      deviceLog(`diag: localStorage.base44_functions_version=${JSON.stringify(localStorage.getItem('base44_functions_version'))}`);
+      syncDebugLog();
+    } catch (_e) { /* ignore */ }
     const urlParams = new URLSearchParams(window.location.search);
     const status = urlParams.get("status");
     if (status === "success") {
