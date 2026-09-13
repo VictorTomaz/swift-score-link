@@ -65,6 +65,10 @@
       "type": "boolean",
       "default": false,
       "description": "Whether currently in trial period"
+    },
+    "apple_app_account_token": {
+      "type": "string",
+      "description": "StoreKit 2 appAccountToken (UUID derived from this user's id via SHA-256, see uuidFromUserId in StoreKitManager.swift and entry.ts) — set on purchase, used by apple-webhook to find the right record when the underlying Apple original_transaction_id is shared across multiple app users (e.g. same sandbox Apple ID reused for several test accounts)."
     }
   },
   "required": [

@@ -1,6 +1,33 @@
 import Foundation
 import StoreKit
+import CryptoKit
 import os.log
+
+// Derives a stable UUID from a Base44 user id (a 24-hex-char ObjectId, not
+// itself a valid UUID) via SHA-256, so it can be passed to StoreKit as the
+// purchase's appAccountToken. Same algorithm on the backend (entry.ts) —
+// SHA-256 of the UTF-8 id, first 16 bytes, RFC 4122 version/variant bits set.
+//
+// Why this exists: apple-webhook has no session/user context (it's a
+// server-to-server callback from Apple), so it can only key Subscription
+// updates by Apple-side identifiers like original_transaction_id. That's
+// normally fine (same user's own renewal), but when the SAME Apple ID is
+// reused across several different Base44 test accounts (only possible with
+// a shared sandbox tester — never happens with a real user's own unique
+// Apple ID), Apple reports the same original_transaction_id for all of
+// them, and the webhook silently overwrote the WRONG user's Subscription
+// row instead of the purchaser's own (confirmed 2026-09-13, victortomaz26's
+// purchase landed on a different test account's record). appAccountToken is
+// Apple's own supported mechanism for exactly this: a UUID we attach to the
+// purchase that comes back in every transaction/notification for it,
+// letting us match precisely instead of guessing from original_transaction_id.
+func uuidFromUserId(_ userId: String) -> UUID {
+    let digest = SHA256.hash(data: Data(userId.utf8))
+    var bytes = Array(digest.prefix(16))
+    bytes[6] = (bytes[6] & 0x0F) | 0x50 // version 5 (name-based)
+    bytes[8] = (bytes[8] & 0x3F) | 0x80 // RFC 4122 variant
+    return NSUUID(uuidBytes: bytes) as UUID
+}
 
 @available(iOS 15.0, *)
 public class StoreKitManager {
@@ -64,9 +91,18 @@ public class StoreKitManager {
         return fetchedProducts
     }
     
-    func purchase(productId: String) async throws -> Product.PurchaseResult {
+    func purchase(productId: String, appUserId: String? = nil) async throws -> Product.PurchaseResult {
         if products.isEmpty {
             _ = try await fetchProducts()
+        }
+
+        var options: Set<Product.PurchaseOption> = []
+        if let appUserId = appUserId, !appUserId.isEmpty {
+            let token = uuidFromUserId(appUserId)
+            options.insert(.appAccountToken(token))
+            log.notice("StoreKitManager: appAccountToken=\(token.uuidString, privacy: .public) derived for app user")
+        } else {
+            log.notice("StoreKitManager: no app userId provided — purchasing without appAccountToken")
         }
 
         guard let product = products.first(where: { $0.id == productId }) else {
@@ -78,11 +114,11 @@ public class StoreKitManager {
                 throw NSError(domain: "StoreKitManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Product \(productId) not found"])
             }
             log.notice("StoreKitManager: calling prod.purchase() for \(productId, privacy: .public)")
-            return try await prod.purchase()
+            return try await prod.purchase(options: options)
         }
 
         log.notice("StoreKitManager: calling product.purchase() for \(productId, privacy: .public)")
-        return try await product.purchase()
+        return try await product.purchase(options: options)
     }
 
     func restorePurchases() async throws {

@@ -85,9 +85,41 @@ async function validateReceiptViaFetch({ jwsTransaction, receiptData, productId 
   return { data, _status: res.status, _type: res.type, _url: res.url };
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Base44's function deploys don't propagate atomically across every serving
+// instance — confirmed 2026-09-13 by tracing this EXACT error string via
+// `git log -S` to entry.ts as it existed at the very first (pre-StoreKit-2)
+// commit, which required the legacy `receiptData` field and never wrote to
+// IapErrorLog. That old code is long gone from the deployed source (verified
+// via a fresh `functions pull` + full-repo grep), yet the identical string
+// still surfaces intermittently on real devices with zero backend trace —
+// meaning some fraction of calls are still being served by a stale compiled
+// bundle. A retry is very likely to land on a different, up-to-date instance.
+const STALE_BUNDLE_ERROR = 'receiptData and productId required';
+
+async function validateReceiptWithRetry(params, deviceLog, maxAttempts = 3) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await validateReceiptViaFetch(params);
+    } catch (err) {
+      lastErr = err;
+      const isStaleBundleHit = err?.response?.status === 400 && err?.response?.data?.error === STALE_BUNDLE_ERROR;
+      if (!isStaleBundleHit || attempt === maxAttempts) throw err;
+      await deviceLog(
+        `validateReceiptWithRetry: hit stale-bundle signature on attempt ${attempt}/${maxAttempts} — retrying`,
+        'error'
+      );
+      await sleep(2000 * attempt);
+    }
+  }
+  throw lastErr;
+}
+
 export default function Paywall() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
   const [isTrial, setIsTrial] = useState(false);
   const [loading, setLoading] = useState(null);
@@ -236,9 +268,13 @@ export default function Paywall() {
     if (isIOSNative) {
       const productId = planType === 'yearly' ? 'com.swiftscoregolf.yearly' : 'com.swiftscoregolf.monthly';
       iosProductIdRef.current = productId;
-      await deviceLog(`handleSubscribe: START native flow planType=${planType} productId=${productId}`);
+      await deviceLog(`handleSubscribe: START native flow planType=${planType} productId=${productId} userId=${user?.id || 'n/a'}`);
       try {
-        const result = await StoreKitPlugin.purchaseSubscription({ productId });
+        // userId lets the native side attach StoreKit's appAccountToken to this
+        // purchase — see uuidFromUserId in StoreKitManager.swift for why: it's
+        // what apple-webhook uses to attribute the subscription to the right
+        // Base44 user even if the underlying Apple ID is shared (sandbox testing).
+        const result = await StoreKitPlugin.purchaseSubscription({ productId, userId: user?.id });
         await deviceLog(
           `handleSubscribe: purchaseSubscription resolved. status=${result?.status} ` +
           `hasJws=${!!result?.jwsTransaction} jwsLen=${(result?.jwsTransaction || '').length} ` +
@@ -272,16 +308,19 @@ export default function Paywall() {
 
           let response;
           try {
-            // PRIMARY: cache-proof raw fetch (see validateReceiptViaFetch comment).
-            response = await validateReceiptViaFetch({ jwsTransaction: jws, receiptData: rcpt, productId });
+            // PRIMARY: cache-proof raw fetch, with a bounded retry against the
+            // known stale-bundle signature (see validateReceiptWithRetry comment).
+            response = await validateReceiptWithRetry({ jwsTransaction: jws, receiptData: rcpt, productId }, deviceLog);
             await deviceLog(
               `validateAppleReceipt via fetch OK: type=${response._type} url=${response._url} ` +
               `data=${JSON.stringify(response?.data)?.slice(0, 450)}`
             );
           } catch (fetchErr) {
             if (fetchErr?.response) {
-              // Real HTTP error response from the fetch path. The SDK hits the
-              // exact same endpoint, so don't retry it — log and rethrow.
+              // Real HTTP error response from the fetch path, surviving retries
+              // (either a genuine validation failure, or the stale-bundle
+              // signature after exhausting attempts). The SDK hits the exact
+              // same endpoint, so don't retry via that path either — log and rethrow.
               await deviceLog(
                 `validateAppleReceipt via fetch HTTP ERROR: status=${fetchErr.response.status} ` +
                 `body=${JSON.stringify(fetchErr.response.data)?.slice(0, 300)}`,
@@ -408,11 +447,11 @@ export default function Paywall() {
         const entitlements = (result.entitlements || []).filter(ent => ent.jwsTransaction);
         await deviceLog(`handleRestore: ${entitlements.length} entitlement(s) with JWS to validate`);
         for (const ent of entitlements) {
-          // Same cache-proof path as the purchase flow.
-          const response = await validateReceiptViaFetch({
+          // Same cache-proof path (with the same stale-bundle retry) as the purchase flow.
+          const response = await validateReceiptWithRetry({
             jwsTransaction: ent.jwsTransaction,
             productId: ent.productId,
-          });
+          }, deviceLog);
           await deviceLog(`handleRestore: validate ${ent.productId} -> ${JSON.stringify(response?.data)?.slice(0, 250)}`);
           if (response.data.valid && response.data.isActive) {
             setHasActiveSubscription(true);

@@ -102,6 +102,20 @@ async function logIapError(base44: any, fields: { path: string; error_message: s
   }
 }
 
+// Same derivation as uuidFromUserId in ios/App/App/StoreKitManager.swift —
+// SHA-256 of the user id's UTF-8 bytes, first 16 bytes, RFC 4122 v5
+// version/variant bits set. Must stay byte-for-byte identical on both sides:
+// this is how we independently confirm which Base44 user a StoreKit
+// appAccountToken belongs to, without needing a reverse lookup table.
+async function uuidFromUserId(userId: string): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(userId));
+  const bytes = new Uint8Array(hashBuffer).slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -139,6 +153,22 @@ Deno.serve(async (req) => {
         const isTrial = decoded.offerType === 1 || decoded.offerType === 2;
         const isSandbox = decoded.environment === 'Sandbox';
 
+        // decoded.appAccountToken is the UUID the native app attached to this
+        // purchase (uuidFromUserId(user.id) in StoreKitManager.swift). Store it
+        // so apple-webhook — which has no session/user context of its own — can
+        // find THIS record precisely instead of guessing from
+        // apple_original_transaction_id alone, which the Apple ID (not our
+        // user) owns and can be shared across app accounts in test scenarios.
+        const appAccountToken: string | undefined = decoded.appAccountToken;
+        if (appAccountToken) {
+          const expectedToken = await uuidFromUserId(user.id);
+          if (expectedToken.toLowerCase() !== appAccountToken.toLowerCase()) {
+            console.error(`validateAppleReceipt: appAccountToken mismatch — got ${appAccountToken}, expected ${expectedToken} for user ${user.id}`);
+          }
+        } else {
+          console.error(`validateAppleReceipt: transaction has no appAccountToken (older client build?) — webhook fallback matching by original_transaction_id is not user-safe. user=${user.id}`);
+        }
+
         const subscriptionData: any = {
           user_id: user.id,
           product_id: productId,
@@ -146,6 +176,7 @@ Deno.serve(async (req) => {
           status: isActive ? (isTrial ? 'trialing' : 'active') : 'expired',
           apple_transaction_id: transactionId,
           apple_original_transaction_id: originalTransactionId,
+          apple_app_account_token: appAccountToken || null,
           receipt_data: jwsTransaction,
           is_trial_period: isTrial,
           current_period_start: purchaseDate.toISOString(),

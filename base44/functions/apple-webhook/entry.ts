@@ -119,6 +119,7 @@ Deno.serve(async (req) => {
     const productId = transaction.productId;
     const transactionId = transaction.transactionId;
     const originalTransactionId = transaction.originalTransactionId;
+    const appAccountToken: string | undefined = transaction.appAccountToken;
     
     if (bundleId !== 'com.base69bb019558d96a11fbfbddce.app') {
       console.error('Apple Webhook: bundle ID mismatch, got', bundleId);
@@ -148,33 +149,63 @@ Deno.serve(async (req) => {
       status = 'expired';
     }
     
-    // Encontra a assinatura existente no banco pelo originalTransactionId
-    const existing = await base44.asServiceRole.entities.Subscription.filter({
-      apple_original_transaction_id: originalTransactionId
-    });
-    
+    // Find the right Subscription row. Prefer appAccountToken — a UUID the
+    // native app derives from ITS OWN Base44 user id and attaches to the
+    // purchase (see uuidFromUserId in StoreKitManager.swift / entry.ts) — over
+    // apple_original_transaction_id, which belongs to the Apple ID, not our
+    // user. A real user's own Apple ID is unique to them, so the two never
+    // diverge in production; but a shared sandbox tester used across several
+    // Base44 test accounts makes Apple report the SAME original_transaction_id
+    // for all of them, and matching by it alone silently overwrote the WRONG
+    // user's record (confirmed 2026-09-13: victortomaz26's purchase landed on
+    // a different test account). appAccountToken disambiguates precisely.
+    let existing: any[] = [];
+    let matchedBy = 'none';
+    if (appAccountToken) {
+      existing = await base44.asServiceRole.entities.Subscription.filter({
+        apple_app_account_token: appAccountToken
+      });
+      if (existing && existing.length > 0) matchedBy = 'appAccountToken';
+    }
+    if (existing.length === 0) {
+      // Fallback for transactions/records that predate this fix (no token
+      // stored yet) — same risk as before for those, but self-heals going
+      // forward since we now always persist the token when we have one.
+      const byOriginalId = await base44.asServiceRole.entities.Subscription.filter({
+        apple_original_transaction_id: originalTransactionId
+      });
+      if (byOriginalId && byOriginalId.length > 0) {
+        matchedBy = 'original_transaction_id (fallback)';
+        if (byOriginalId.length > 1) {
+          console.error(`Apple Webhook: ${byOriginalId.length} Subscription rows share original_transaction_id ${originalTransactionId} — likely multiple app users on the same Apple ID. Using the first; this is exactly the ambiguity appAccountToken is meant to prevent.`);
+        }
+        existing = byOriginalId;
+      }
+    }
+
     const recordData: any = {
       product_id: productId,
       subscription_type: productId.includes('yearly') ? 'yearly' : 'monthly',
       status: status,
       apple_transaction_id: transactionId,
       apple_original_transaction_id: originalTransactionId,
+      apple_app_account_token: appAccountToken || null,
       is_trial_period: isTrial,
       current_period_start: purchaseDate.toISOString(),
       current_period_end: expiresDate ? expiresDate.toISOString() : null,
       receipt_data: signedTransactionInfo,
     };
-    
+
     if (isTrial && expiresDate) {
       recordData.trial_start_date = purchaseDate.toISOString();
       recordData.trial_end_date = expiresDate.toISOString();
     }
-    
+
     if (existing && existing.length > 0) {
       await base44.asServiceRole.entities.Subscription.update(existing[0].id, recordData);
-      console.log(`Apple Webhook: Updated subscription ${existing[0].id} to ${status} for transaction ${transactionId}`);
+      console.log(`Apple Webhook: Updated subscription ${existing[0].id} to ${status} for transaction ${transactionId} (matched by ${matchedBy})`);
     } else {
-      console.log(`Apple Webhook: Subscription with originalTransactionId ${originalTransactionId} not found in DB.`);
+      console.log(`Apple Webhook: No existing Subscription found (appAccountToken=${appAccountToken ?? 'none'}, originalTransactionId=${originalTransactionId}) — nothing to update. This notification likely arrived before the purchasing client's own validateAppleReceipt call created the row.`);
     }
     
     return Response.json({ received: true });

@@ -93,12 +93,18 @@ public class StoreKitPlugin: CAPPlugin {
             call.reject("productId is required")
             return
         }
+        // Base44 user id (Mongo-style ObjectId string, not a UUID itself) —
+        // turned into a stable UUID and sent to StoreKit as the purchase's
+        // appAccountToken. See uuidFromUserId in StoreKitManager.swift for why:
+        // without it, a shared sandbox Apple ID across several app accounts
+        // makes the webhook attribute the subscription to the wrong user.
+        let appUserId = call.getString("userId")
 
-        log.notice("purchaseSubscription: START productId=\(productId, privacy: .public)")
+        log.notice("purchaseSubscription: START productId=\(productId, privacy: .public) hasAppUserId=\(appUserId != nil)")
 
         Task {
             do {
-                let purchaseResult = try await manager.purchase(productId: productId)
+                let purchaseResult = try await manager.purchase(productId: productId, appUserId: appUserId)
                 log.notice("purchaseSubscription: manager.purchase() returned, case=\(String(describing: purchaseResult), privacy: .public)")
                 switch purchaseResult {
                 case .success(let verificationResult):
