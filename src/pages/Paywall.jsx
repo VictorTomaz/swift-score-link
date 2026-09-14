@@ -39,70 +39,38 @@ async function deviceLog(message, level = "notice") {
   } catch (_e) { /* noop */ }
 }
 
-// Primary purchase-validation path on native iOS. Uses base44.functions.fetch()
-// — the SDK's own raw-fetch helper — instead of a hand-rolled fetch(). Why this
-// matters: our earlier hand-rolled version read the auth token from
-// `appParams.token`, a ONE-TIME snapshot taken when the page/module first
-// loaded. The SDK itself never does that — base44.functions.invoke() resolves
-// the Authorization header fresh on every call via getAccessToken(), which
-// re-reads localStorage live. If the stored token is refreshed/rotated any
-// time after that initial snapshot (very plausible across the 30-90s a real
-// purchase spends in Apple's native sign-in UI), our own fetch would keep
-// sending the stale one while the SDK sends the current one — and a real
-// device test (2026-09-11) showed exactly a bare "Request failed with status
-// code 400" with NO matching IapErrorLog row, meaning the request never even
-// reached our function code: consistent with rejection at Base44's auth layer
-// before our handler runs. base44.functions.fetch() gives us the SDK's
-// always-current auth headers while still being real fetch (so cache:'no-store'
-// + a unique query keep working as a cache-buster).
-// Returns { data } like the SDK; throws an axios-shaped error (err.response =
-// { status, data }) on an HTTP error so existing handling still works.
-async function validateReceiptViaFetch({ jwsTransaction, receiptData, productId }) {
-  const nonce = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const res = await base44.functions.fetch(`/validateAppleReceipt?_cb=${nonce}`, {
-    method: "POST",
-    cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache, no-store, must-revalidate",
-      "Pragma": "no-cache",
-    },
-    body: JSON.stringify({
-      receiptData: receiptData || "",
-      jwsTransaction: jwsTransaction || "",
-      productId,
-    }),
-  });
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch (_e) { data = { error: text }; }
-  if (!res.ok) {
-    const err = new Error(data?.error || `HTTP ${res.status}`);
-    err.response = { status: res.status, data };
-    err.viaFetch = true;
-    throw err;
-  }
-  return { data, _status: res.status, _type: res.type, _url: res.url };
-}
-
+// Primary purchase-validation path on native iOS. Uses base44.functions.invoke()
+// — the SDK's normal method, same as every other function call in this app
+// (checkSubscriptionStatus, etc.) and the same one Water Rest (another
+// Base44+Capacitor IAP app) uses for its own receipt validation.
+//
+// This used to go through a hand-rolled base44.functions.fetch() call instead,
+// added to cache-bust an intermittent 400 with a body only the very first,
+// pre-StoreKit-2 commit of validateAppleReceipt/entry.ts could produce (traced
+// via `git log -S`; long gone from the deployed source). That turned out to be
+// the wrong axis: functions.fetch() and functions.invoke() hit DIFFERENT URLs
+// (`/api/functions/{name}` vs `/api/apps/{appId}/functions/{name}`), and on
+// 2026-09-14, on the exact device/session reproducing the bug, the invoke()-based
+// checkSubscriptionStatus control call this file already makes right before this
+// one succeeded every single time while the fetch()-based call failed — same
+// device, same minute, only the URL differed. Switched validateAppleReceipt
+// (and restore, below) to invoke() to match the path that was actually reliable.
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Base44's function deploys don't propagate atomically across every serving
-// instance — confirmed 2026-09-13 by tracing this EXACT error string via
-// `git log -S` to entry.ts as it existed at the very first (pre-StoreKit-2)
-// commit, which required the legacy `receiptData` field and never wrote to
-// IapErrorLog. That old code is long gone from the deployed source (verified
-// via a fresh `functions pull` + full-repo grep), yet the identical string
-// still surfaces intermittently on real devices with zero backend trace —
-// meaning some fraction of calls are still being served by a stale compiled
-// bundle. A retry is very likely to land on a different, up-to-date instance.
+// Kept as a safety net during rollout — see STALE_BUNDLE_ERROR history above.
+// A retry costs little and this signature specifically indicates a bad
+// response rather than a real validation failure, so still worth one more try.
 const STALE_BUNDLE_ERROR = 'receiptData and productId required';
 
-async function validateReceiptWithRetry(params, deviceLog, maxAttempts = 3) {
+async function validateReceiptWithRetry({ jwsTransaction, receiptData, productId }, deviceLog, maxAttempts = 3) {
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await validateReceiptViaFetch(params);
+      return await base44.functions.invoke('validateAppleReceipt', {
+        receiptData: receiptData || "",
+        jwsTransaction: jwsTransaction || "",
+        productId,
+      });
     } catch (err) {
       lastErr = err;
       const isStaleBundleHit = err?.response?.status === 400 && err?.response?.data?.error === STALE_BUNDLE_ERROR;
@@ -337,44 +305,16 @@ export default function Paywall() {
 
           let response;
           try {
-            // PRIMARY: cache-proof raw fetch, with a bounded retry against the
-            // known stale-bundle signature (see validateReceiptWithRetry comment).
             response = await validateReceiptWithRetry({ jwsTransaction: jws, receiptData: rcpt, productId }, deviceLog);
+            await deviceLog(`validateAppleReceipt OK: data=${JSON.stringify(response?.data)?.slice(0, 450)}`);
+          } catch (invokeErr) {
+            const r = invokeErr?.response;
             await deviceLog(
-              `validateAppleReceipt via fetch OK: type=${response._type} url=${response._url} ` +
-              `data=${JSON.stringify(response?.data)?.slice(0, 450)}`
+              `validateAppleReceipt ERROR: msg=${invokeErr?.message} respStatus=${r?.status} ` +
+              `body=${JSON.stringify(r?.data)?.slice(0, 300)}`,
+              'error'
             );
-          } catch (fetchErr) {
-            if (fetchErr?.response) {
-              // Real HTTP error response from the fetch path, surviving retries
-              // (either a genuine validation failure, or the stale-bundle
-              // signature after exhausting attempts). The SDK hits the exact
-              // same endpoint, so don't retry via that path either — log and rethrow.
-              await deviceLog(
-                `validateAppleReceipt via fetch HTTP ERROR: status=${fetchErr.response.status} ` +
-                `body=${JSON.stringify(fetchErr.response.data)?.slice(0, 300)}`,
-                'error'
-              );
-              throw fetchErr;
-            }
-            // Network-level failure (no response at all) — fall back to the SDK once.
-            await deviceLog(`validateAppleReceipt via fetch NETWORK FAIL: ${fetchErr?.message}. Falling back to SDK.`, 'error');
-            try {
-              response = await base44.functions.invoke('validateAppleReceipt', {
-                receiptData: result.receiptData,
-                jwsTransaction: result.jwsTransaction,
-                productId: productId,
-              });
-              await deviceLog(`validateAppleReceipt SDK fallback OK: data=${JSON.stringify(response?.data)?.slice(0, 450)}`);
-            } catch (invokeErr) {
-              const r = invokeErr?.response;
-              await deviceLog(
-                `validateAppleReceipt SDK fallback ERROR: msg=${invokeErr?.message} respStatus=${r?.status} ` +
-                `body=${JSON.stringify(r?.data)?.slice(0, 300)}`,
-                'error'
-              );
-              throw invokeErr;
-            }
+            throw invokeErr;
           }
 
           // The backend durably recorded this receipt (whatever the resulting
