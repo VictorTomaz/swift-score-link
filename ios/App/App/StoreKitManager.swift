@@ -52,7 +52,12 @@ public class StoreKitManager {
         updateListenerTask?.cancel()
     }
     
-    // Permanently listen for transaction updates from App Store.
+    // Permanently listen for transaction updates from App Store. Also how a
+    // purchase's own transaction gets redelivered on a later launch if it was
+    // never finished (see purchase()/finishTransaction() below) — StoreKit
+    // keeps replaying an unfinished transaction here until something finishes
+    // it, which is exactly the retry mechanism we want when our backend
+    // validation failed the first time.
     func startTransactionListener() {
         updateListenerTask?.cancel()
         log.notice("StoreKitManager: startTransactionListener installed")
@@ -62,18 +67,54 @@ public class StoreKitManager {
                     let transaction = try self.checkVerified(result)
                     log.notice("StoreKitManager: Transaction.updates fired — productID=\(transaction.productID, privacy: .public) transactionId=\(String(transaction.id), privacy: .public) revocationDate=\(String(describing: transaction.revocationDate), privacy: .public)")
 
-                    // Sincronizar o estado local e postar notificação para o frontend
-                    NotificationCenter.default.post(name: NSNotification.Name("StoreKitTransactionUpdated"), object: nil)
+                    if transaction.revocationDate != nil {
+                        // Refund/revocation — nothing for our backend to validate,
+                        // just acknowledge it.
+                        await transaction.finish()
+                        log.notice("StoreKitManager: Transaction.updates — revoked transaction finished, id=\(String(transaction.id), privacy: .public)")
+                        NotificationCenter.default.post(name: NSNotification.Name("StoreKitTransactionUpdated"), object: nil)
+                        continue
+                    }
 
-                    // Finaliza a transação
-                    await transaction.finish()
-                    log.notice("StoreKitManager: Transaction.updates — finish() completed for transactionId=\(String(transaction.id), privacy: .public)")
+                    // Do NOT finish here. Finishing before our backend confirms the
+                    // purchase is exactly the bug that made a failed validateAppleReceipt
+                    // call unrecoverable (StoreKit never re-delivers a finished
+                    // transaction). Instead, hand the JWS to JS so it can retry
+                    // validation and only then call finishTransaction(). If JS never
+                    // gets a chance to (app killed, etc.), this same transaction comes
+                    // back through this exact loop on the next launch.
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("StoreKitTransactionUpdated"),
+                        object: nil,
+                        userInfo: [
+                            "transactionId": String(transaction.id),
+                            "productId": transaction.productID,
+                            "jwsTransaction": result.jwsRepresentation,
+                        ]
+                    )
                 } catch {
                     let ns = error as NSError
                     log.error("StoreKitManager: Transaction.updates verification failed — domain=\(ns.domain, privacy: .public) code=\(ns.code) desc=\(error.localizedDescription, privacy: .public)")
                 }
             }
         }
+    }
+
+    // Finds an unfinished transaction by id and finishes it. Called from JS
+    // only after validateAppleReceipt has durably recorded the purchase —
+    // see the comment in startTransactionListener() for why finishing is
+    // deferred this far.
+    func finishTransaction(id: UInt64) async -> Bool {
+        for await result in Transaction.unfinished {
+            guard let transaction = try? checkVerified(result) else { continue }
+            if transaction.id == id {
+                await transaction.finish()
+                log.notice("StoreKitManager: finishTransaction — finished id=\(String(id), privacy: .public)")
+                return true
+            }
+        }
+        log.error("StoreKitManager: finishTransaction — id=\(String(id), privacy: .public) not found among unfinished transactions")
+        return false
     }
     
     func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {

@@ -15,17 +15,27 @@ public class StoreKitPlugin: CAPPlugin {
     
     override public func load() {
         super.load()
-        NotificationCenter.default.addObserver(self, selector: #selector(handleTransactionNotification), name: NSNotification.Name("StoreKitTransactionUpdated"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleTransactionNotification(_:)), name: NSNotification.Name("StoreKitTransactionUpdated"), object: nil)
     }
     
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
     
-    @objc func handleTransactionNotification() {
-        // Emit an event to the web app listeners
-        self.notifyListeners("subscriptionUpdate", data: [:])
-        
+    // userInfo carries {transactionId, productId, jwsTransaction} for an
+    // unfinished transaction StoreKit just (re)delivered (see
+    // StoreKitManager.startTransactionListener) — empty for a plain sync/revocation
+    // ping. JS uses these fields to retry validateAppleReceipt and, on success,
+    // call finishTransaction(transactionId) itself; nothing here finishes it.
+    @objc func handleTransactionNotification(_ notification: Notification) {
+        var data: [String: Any] = [:]
+        if let info = notification.userInfo {
+            if let tid = info["transactionId"] as? String { data["transactionId"] = tid }
+            if let pid = info["productId"] as? String { data["productId"] = pid }
+            if let jws = info["jwsTransaction"] as? String { data["jwsTransaction"] = jws }
+        }
+        self.notifyListeners("subscriptionUpdate", data: data)
+
         // Also call the legacy global callbacks if available, to ensure compatibility
         if let receiptData = manager.getReceiptData() {
             DispatchQueue.main.async {
@@ -117,8 +127,14 @@ public class StoreKitPlugin: CAPPlugin {
                         jwsRepresentation = verificationResult.jwsRepresentation
                         transactionId = String(transaction.id)
                         log.notice("purchaseSubscription: VERIFIED transactionId=\(transactionId, privacy: .public) originalId=\(String(transaction.originalID), privacy: .public) jwsLength=\(jwsRepresentation.count) receiptDataLength=\(receiptData.count)")
-                        await transaction.finish()
-                        log.notice("purchaseSubscription: transaction.finish() completed for transactionId=\(transactionId, privacy: .public)")
+                        // Deliberately NOT finishing here. Finishing before our backend
+                        // confirms the purchase made a failed validateAppleReceipt call
+                        // unrecoverable — StoreKit never re-delivers a finished
+                        // transaction, so a transient backend hiccup permanently lost the
+                        // purchase. JS calls finishTransaction() itself once
+                        // validateAppleReceipt actually succeeds; until then this
+                        // transaction stays pending and StoreKit keeps re-delivering it
+                        // via Transaction.updates on every launch.
                     case .unverified(let transaction, let error):
                         jwsRepresentation = verificationResult.jwsRepresentation
                         transactionId = String(transaction.id)
@@ -249,6 +265,23 @@ public class StoreKitPlugin: CAPPlugin {
         }
     }
     
+    // Called from JS only after validateAppleReceipt has durably recorded the
+    // purchase (see the comment on the .verified case in purchaseSubscription,
+    // and on Transaction.updates in StoreKitManager.swift for why finishing is
+    // deferred this far). transactionId is the UInt64 StoreKit id as a string.
+    @objc func finishTransaction(_ call: CAPPluginCall) {
+        guard let transactionIdStr = call.getString("transactionId"), let transactionId = UInt64(transactionIdStr) else {
+            log.error("finishTransaction: rejected — missing/invalid transactionId")
+            call.reject("transactionId is required")
+            return
+        }
+        log.notice("finishTransaction: START transactionId=\(transactionIdStr, privacy: .public)")
+        Task {
+            let found = await manager.finishTransaction(id: transactionId)
+            call.resolve(["found": found])
+        }
+    }
+
     @objc func redeemOfferCode(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene else {

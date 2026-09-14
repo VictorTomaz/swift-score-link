@@ -8,4 +8,5 @@ CAP_PLUGIN(StoreKitPlugin, "StoreKitPlugin",
            CAP_PLUGIN_METHOD(redeemOfferCode, CAPPluginReturnPromise);
            CAP_PLUGIN_METHOD(getSubscriptionStatus, CAPPluginReturnPromise);
            CAP_PLUGIN_METHOD(nativeLog, CAPPluginReturnPromise);
+           CAP_PLUGIN_METHOD(finishTransaction, CAPPluginReturnPromise);
 )

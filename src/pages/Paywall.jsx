@@ -192,11 +192,32 @@ export default function Paywall() {
   }, [hasActiveSubscription, statusMessage, navigate]);
 
   // Sincronização automática quando o nativo atualiza transações em background (como resgate de Offer Code)
+  // ou redelivers um transaction que ficou pendente (StoreKitManager.swift não
+  // finaliza mais uma compra até validateAppleReceipt confirmar — ver comentário
+  // em handleSubscribe). Quando o evento vem com {transactionId, productId,
+  // jwsTransaction}, é exatamente esse caso: uma tentativa que falhou na
+  // validação antes ganha uma nova chance aqui, em vez de ficar perdida.
   useEffect(() => {
     let listener = null;
     if (isIOSNative) {
-      listener = StoreKitPlugin.addListener("subscriptionUpdate", () => {
-        console.log("Subscription updated event received from iOS StoreKit 2");
+      listener = StoreKitPlugin.addListener("subscriptionUpdate", async (event) => {
+        console.log("Subscription updated event received from iOS StoreKit 2", event);
+        const { transactionId, productId, jwsTransaction } = event || {};
+        if (transactionId && productId && jwsTransaction) {
+          await deviceLog(`subscriptionUpdate: retrying validation for pending transactionId=${transactionId} productId=${productId}`);
+          try {
+            const response = await validateReceiptWithRetry({ jwsTransaction, productId }, deviceLog);
+            await deviceLog(`subscriptionUpdate: validation OK, finishing transactionId=${transactionId}`);
+            await StoreKitPlugin.finishTransaction({ transactionId });
+            if (response?.data?.valid && response?.data?.isActive) {
+              setHasActiveSubscription(true);
+              setIsTrial(response.data.isTrial || false);
+            }
+          } catch (err) {
+            await deviceLog(`subscriptionUpdate: validation still failing for transactionId=${transactionId}: ${err?.message}`, 'error');
+            // Não finaliza — StoreKit reentrega essa mesma transação no próximo launch.
+          }
+        }
         checkExistingSubscription();
       });
     }
@@ -353,6 +374,19 @@ export default function Paywall() {
                 'error'
               );
               throw invokeErr;
+            }
+          }
+
+          // The backend durably recorded this receipt (whatever the resulting
+          // status) — safe to finish now. See the comment on the .verified case
+          // in StoreKitPlugin.swift's purchaseSubscription for why this was
+          // moved here instead of happening natively right after the purchase.
+          if (result.transactionId) {
+            try {
+              await StoreKitPlugin.finishTransaction({ transactionId: result.transactionId });
+              await deviceLog(`handleSubscribe: finishTransaction OK for txId=${result.transactionId}`);
+            } catch (finishErr) {
+              await deviceLog(`handleSubscribe: finishTransaction FAILED for txId=${result.transactionId}: ${finishErr?.message}`, 'error');
             }
           }
 
