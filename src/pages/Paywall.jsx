@@ -62,6 +62,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // response rather than a real validation failure, so still worth one more try.
 const STALE_BUNDLE_ERROR = 'receiptData and productId required';
 
+// validateAppleReceipt refuses (409) when this Apple subscription is already
+// linked to a different Swift Score Golf account — a final answer, not a
+// transient failure: never retried, and the native transaction is finished
+// so StoreKit doesn't keep redelivering it on every launch.
+const OWNERSHIP_CONFLICT_ERROR = 'SUBSCRIPTION_LINKED_TO_ANOTHER_ACCOUNT';
+const OWNERSHIP_CONFLICT_MESSAGE =
+  "This Apple subscription is already linked to a different Swift Score Golf account. " +
+  "Sign in with the account you originally subscribed with to use Premium.";
+const isOwnershipConflict = (err) =>
+  err?.response?.status === 409 && err?.response?.data?.error === OWNERSHIP_CONFLICT_ERROR;
+
 async function validateReceiptWithRetry({ jwsTransaction, receiptData, productId }, deviceLog, maxAttempts = 3) {
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -182,8 +193,15 @@ export default function Paywall() {
               setIsTrial(response.data.isTrial || false);
             }
           } catch (err) {
-            await deviceLog(`subscriptionUpdate: validation still failing for transactionId=${transactionId}: ${err?.message}`, 'error');
-            // Não finaliza — StoreKit reentrega essa mesma transação no próximo launch.
+            if (isOwnershipConflict(err)) {
+              // Definitive refusal — finish so it isn't redelivered forever.
+              await deviceLog(`subscriptionUpdate: transactionId=${transactionId} is linked to another account — finishing, not retrying`, 'error');
+              try { await StoreKitPlugin.finishTransaction({ transactionId }); } catch (_e) { /* noop */ }
+              setError(OWNERSHIP_CONFLICT_MESSAGE);
+            } else {
+              await deviceLog(`subscriptionUpdate: validation still failing for transactionId=${transactionId}: ${err?.message}`, 'error');
+              // Não finaliza — StoreKit reentrega essa mesma transação no próximo launch.
+            }
           }
         }
         checkExistingSubscription();
@@ -314,6 +332,17 @@ export default function Paywall() {
               `body=${JSON.stringify(r?.data)?.slice(0, 300)}`,
               'error'
             );
+            if (isOwnershipConflict(invokeErr)) {
+              // This Apple subscription belongs to another app account. Final
+              // answer: finish the transaction (no redelivery loop), tell the
+              // user, and skip the reconcile polling — it can never succeed.
+              if (result.transactionId) {
+                try { await StoreKitPlugin.finishTransaction({ transactionId: result.transactionId }); } catch (_e) { /* noop */ }
+              }
+              setStatusMessage(null);
+              setError(OWNERSHIP_CONFLICT_MESSAGE);
+              return;
+            }
             throw invokeErr;
           }
 
@@ -428,12 +457,23 @@ export default function Paywall() {
         // usado na compra — evita depender da API legada verifyReceipt.
         const entitlements = (result.entitlements || []).filter(ent => ent.jwsTransaction);
         await deviceLog(`handleRestore: ${entitlements.length} entitlement(s) with JWS to validate`);
+        let linkedElsewhere = false;
         for (const ent of entitlements) {
-          // Same cache-proof path (with the same stale-bundle retry) as the purchase flow.
-          const response = await validateReceiptWithRetry({
-            jwsTransaction: ent.jwsTransaction,
-            productId: ent.productId,
-          }, deviceLog);
+          // Same path (with the same stale-bundle retry) as the purchase flow.
+          let response;
+          try {
+            response = await validateReceiptWithRetry({
+              jwsTransaction: ent.jwsTransaction,
+              productId: ent.productId,
+            }, deviceLog);
+          } catch (entErr) {
+            if (isOwnershipConflict(entErr)) {
+              await deviceLog(`handleRestore: ${ent.productId} is linked to another account — skipping`, 'error');
+              linkedElsewhere = true;
+              continue;
+            }
+            throw entErr;
+          }
           await deviceLog(`handleRestore: validate ${ent.productId} -> ${JSON.stringify(response?.data)?.slice(0, 250)}`);
           if (response.data.valid && response.data.isActive) {
             setHasActiveSubscription(true);
@@ -446,8 +486,13 @@ export default function Paywall() {
         }
         if (!restored) {
           setStatusMessage(null);
-          setError("No active subscription found to restore.");
-          reconcileAfterPurchaseAttempt();
+          if (linkedElsewhere) {
+            // Final answer, nothing to reconcile.
+            setError(OWNERSHIP_CONFLICT_MESSAGE);
+          } else {
+            setError("No active subscription found to restore.");
+            reconcileAfterPurchaseAttempt();
+          }
         }
       }
     } catch (err) {

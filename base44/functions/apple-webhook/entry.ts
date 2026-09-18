@@ -176,10 +176,13 @@ Deno.serve(async (req) => {
       });
       if (byOriginalId && byOriginalId.length > 0) {
         matchedBy = 'original_transaction_id (fallback)';
-        if (byOriginalId.length > 1) {
-          console.error(`Apple Webhook: ${byOriginalId.length} Subscription rows share original_transaction_id ${originalTransactionId} — likely multiple app users on the same Apple ID. Using the first; this is exactly the ambiguity appAccountToken is meant to prevent.`);
+        // One Apple subscription belongs to exactly one app account: the
+        // earliest row (same ownership rule as validateAppleReceipt). More than
+        // one row only exists from pre-rule duplicates — always update the owner.
+        existing = [...byOriginalId].sort((a: any, b: any) => String(a.created_date).localeCompare(String(b.created_date)));
+        if (existing.length > 1) {
+          console.error(`Apple Webhook: ${existing.length} Subscription rows share original_transaction_id ${originalTransactionId} (pre-rule duplicates); updating the owner (earliest row) ${existing[0].id}.`);
         }
-        existing = byOriginalId;
       }
     }
 

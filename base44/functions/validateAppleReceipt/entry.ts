@@ -116,6 +116,31 @@ async function uuidFromUserId(userId: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Product decision (Edward, 2026-09-18): one Apple subscription
+// (apple_original_transaction_id) is linked to exactly ONE Swift Score Golf
+// account. The first account to validate it owns it — the earliest
+// Subscription row for that id — and any other account is refused. Status is
+// deliberately ignored: a lapsed subscription stays bound, because Apple
+// keeps renewing/reviving the same original_transaction_id. Apple has no rule
+// for this case (its system only knows Apple IDs, not app accounts), so it is
+// entirely the developer's call.
+async function findOwnershipConflict(base44: any, originalTransactionId: string | undefined, userId: string) {
+  if (!originalTransactionId) return null;
+  const rows = await base44.asServiceRole.entities.Subscription.filter({
+    apple_original_transaction_id: String(originalTransactionId),
+  });
+  if (!rows || rows.length === 0) return null;
+  const owner = [...rows].sort((a: any, b: any) => String(a.created_date).localeCompare(String(b.created_date)))[0];
+  return owner.user_id === userId ? null : owner;
+}
+
+function ownershipConflictResponse() {
+  return Response.json({
+    error: 'SUBSCRIPTION_LINKED_TO_ANOTHER_ACCOUNT',
+    message: 'This Apple subscription is already linked to a different Swift Score Golf account.',
+  }, { status: 409 });
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -163,10 +188,21 @@ Deno.serve(async (req) => {
         if (appAccountToken) {
           const expectedToken = await uuidFromUserId(user.id);
           if (expectedToken.toLowerCase() !== appAccountToken.toLowerCase()) {
+            // The purchase was started by a different app account — direct
+            // evidence it belongs elsewhere.
             console.error(`validateAppleReceipt: appAccountToken mismatch — got ${appAccountToken}, expected ${expectedToken} for user ${user.id}`);
+            await logIapError(base44, { path: 'ownership_conflict', error_message: `appAccountToken mismatch for original_transaction_id ${originalTransactionId}`, user_id: user.id, product_id: productId });
+            return ownershipConflictResponse();
           }
         } else {
-          console.error(`validateAppleReceipt: transaction has no appAccountToken (older client build?) — webhook fallback matching by original_transaction_id is not user-safe. user=${user.id}`);
+          console.error(`validateAppleReceipt: transaction has no appAccountToken (older client build or pre-token purchase) — ownership falls back to original_transaction_id. user=${user.id}`);
+        }
+
+        const conflictingOwner = await findOwnershipConflict(base44, originalTransactionId, user.id);
+        if (conflictingOwner) {
+          console.error(`validateAppleReceipt: original_transaction_id ${originalTransactionId} already linked to user ${conflictingOwner.user_id}; refusing user ${user.id}`);
+          await logIapError(base44, { path: 'ownership_conflict', error_message: `original_transaction_id ${originalTransactionId} already linked to user ${conflictingOwner.user_id}`, user_id: user.id, product_id: productId });
+          return ownershipConflictResponse();
         }
 
         const subscriptionData: any = {
@@ -264,6 +300,13 @@ Deno.serve(async (req) => {
         const trialEndDate = subscriptionInfo.original_purchase_date_ms
           ? new Date(Number(subscriptionInfo.original_purchase_date_ms) + (30 * 24 * 60 * 60 * 1000))
           : null;
+
+        const conflictingOwner = await findOwnershipConflict(base44, subscriptionInfo.original_transaction_id, user.id);
+        if (conflictingOwner) {
+          console.error(`validateAppleReceipt: original_transaction_id ${subscriptionInfo.original_transaction_id} already linked to user ${conflictingOwner.user_id}; refusing user ${user.id}`);
+          await logIapError(base44, { path: 'ownership_conflict', error_message: `original_transaction_id ${subscriptionInfo.original_transaction_id} already linked to user ${conflictingOwner.user_id}`, user_id: user.id, product_id: productId });
+          return ownershipConflictResponse();
+        }
 
         const existingSubs = await base44.asServiceRole.entities.Subscription.filter({
           user_id: user.id,
