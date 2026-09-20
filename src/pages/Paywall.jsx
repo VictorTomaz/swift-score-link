@@ -171,11 +171,40 @@ export default function Paywall() {
       window.history.replaceState({}, "", "/Paywall");
     }
     checkExistingSubscription();
-    
+
     if (isIOSNative) {
       loadStoreKitProducts();
     }
   }, [isIOSNative]);
+
+  // A returning user whose subscription ran out lands here with no hint why
+  // (checkSubscriptionStatus only reports "no active subscription"). If this
+  // account has a Subscription row whose period has ended, say so. Read
+  // straight from the entity — RLS lets a user read their own rows — and stay
+  // silent on any failure: this is only an informational banner.
+  const [expiredNotice, setExpiredNotice] = useState(null);
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await base44.entities.Subscription.filter({ user_id: user.id });
+        if (cancelled || !rows?.length) return;
+        const now = Date.now();
+        const isLive = (r) => (r.status === 'active' || r.status === 'trialing') &&
+          r.current_period_end && new Date(r.current_period_end).getTime() > now;
+        if (rows.some(isLive)) return;
+        const latestEnd = rows
+          .map((r) => r.current_period_end && new Date(r.current_period_end).getTime())
+          .filter(Boolean)
+          .sort((a, b) => b - a)[0];
+        if (!latestEnd || latestEnd > now) return;
+        const when = new Date(latestEnd).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+        setExpiredNotice(`Your Premium subscription ended on ${when}. Subscribe again to continue with Premium.`);
+      } catch (_e) { /* informational only */ }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   // Auto-redirect to Dashboard after successful checkout
   useEffect(() => {
@@ -644,6 +673,11 @@ export default function Paywall() {
         </div>
 
         {/* Status / Error Messages */}
+        {expiredNotice && !hasActiveSubscription && !statusMessage && !error && (
+          <div className="text-center p-4 rounded-lg bg-muted/40 border border-border">
+            <p className="text-sm font-medium text-foreground">{expiredNotice}</p>
+          </div>
+        )}
         {statusMessage && (
           <div className="text-center p-4 rounded-lg bg-accent/10 border border-accent/20">
             <p className="text-sm font-medium text-accent">{statusMessage}</p>
