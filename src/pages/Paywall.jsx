@@ -73,27 +73,42 @@ const OWNERSHIP_CONFLICT_MESSAGE =
 const isOwnershipConflict = (err) =>
   err?.response?.status === 409 && err?.response?.data?.error === OWNERSHIP_CONFLICT_ERROR;
 
-async function validateReceiptWithRetry({ jwsTransaction, receiptData, productId }, deviceLog, maxAttempts = 3) {
-  let lastErr;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await base44.functions.invoke('validateAppleReceipt', {
-        receiptData: receiptData || "",
-        jwsTransaction: jwsTransaction || "",
-        productId,
-      });
-    } catch (err) {
-      lastErr = err;
-      const isStaleBundleHit = err?.response?.status === 400 && err?.response?.data?.error === STALE_BUNDLE_ERROR;
-      if (!isStaleBundleHit || attempt === maxAttempts) throw err;
-      await deviceLog(
-        `validateReceiptWithRetry: hit stale-bundle signature on attempt ${attempt}/${maxAttempts} — retrying`,
-        'error'
-      );
-      await sleep(2000 * attempt);
+// One validation at a time. Several unfinished transactions (a purchase plus
+// its sandbox renewals that piled up while the backend was refusing) are
+// redelivered together on launch; validated concurrently, every call saw "no
+// row yet" for this user+product and each created its own — 6 duplicate
+// Subscription rows for one account on 2026-09-20. Running them one after
+// another makes the 2nd..Nth call find and update the first call's row.
+let validationQueue = Promise.resolve();
+function runSerially(task) {
+  const run = validationQueue.then(task, task);
+  validationQueue = run.catch(() => {});
+  return run;
+}
+
+function validateReceiptWithRetry({ jwsTransaction, receiptData, productId }, deviceLog, maxAttempts = 3) {
+  return runSerially(async () => {
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await base44.functions.invoke('validateAppleReceipt', {
+          receiptData: receiptData || "",
+          jwsTransaction: jwsTransaction || "",
+          productId,
+        });
+      } catch (err) {
+        lastErr = err;
+        const isStaleBundleHit = err?.response?.status === 400 && err?.response?.data?.error === STALE_BUNDLE_ERROR;
+        if (!isStaleBundleHit || attempt === maxAttempts) throw err;
+        await deviceLog(
+          `validateReceiptWithRetry: hit stale-bundle signature on attempt ${attempt}/${maxAttempts} — retrying`,
+          'error'
+        );
+        await sleep(2000 * attempt);
+      }
     }
-  }
-  throw lastErr;
+    throw lastErr;
+  });
 }
 
 export default function Paywall() {
@@ -364,6 +379,13 @@ export default function Paywall() {
             setIsTrial(response.data.isTrial || false);
             setStatusMessage("Subscription activated! Redirecting...");
             setTimeout(() => navigate("/Dashboard"), 1500);
+          } else if (response.data.valid) {
+            // The receipt is genuine and was recorded, but the subscription
+            // period already ended (typical in Sandbox, where a subscription
+            // lives roughly an hour). Restore can't help — it only finds ACTIVE
+            // entitlements — and polling the DB can't turn it active either.
+            setStatusMessage(null);
+            setError("This subscription has expired. Please subscribe again to continue with Premium.");
           } else {
             setStatusMessage(null);
             setError("Purchase validation failed. Please try restoring purchases.");
