@@ -29,7 +29,26 @@ Deno.serve(async (req) => {
     }
     if (!round) return Response.json({ error: 'Round not found' }, { status: 404 });
 
-    if (!round.is_multi_day && !round.is_multi_flight) return Response.json({ rounds: [round] });
+    // RoundScore records are the single source of truth for scores. Merge them
+    // into every returned round's players[].scores so the embedded copy on the
+    // Round record (which can lag behind saves) is never what callers read.
+    const normalizeScores = (scores: any[]) => (scores || []).map((s: any) => {
+      if (s === null || s === undefined || s === '' || s === 0) return '';
+      const str = String(s).trim().toUpperCase();
+      return str === 'X' ? 'X' : str;
+    });
+    const hydrate = async (r: any) => {
+      if (!r?.id || !Array.isArray(r.players)) return r;
+      let records: any[] = [];
+      try { records = await base44.asServiceRole.entities.RoundScore.filter({ round_id: r.id }, '-created_date', 200); }
+      catch (e) { try { records = await base44.entities.RoundScore.filter({ round_id: r.id }, '-created_date', 200); } catch (e2) { records = []; } }
+      if (records.length === 0) return r;
+      const map: Record<string, any[]> = {};
+      records.forEach((rs: any) => { map[rs.player_id] = normalizeScores(rs.scores); });
+      return { ...r, players: r.players.map((p: any) => ({ ...p, scores: map[p.player_id] || p.scores || [] })) };
+    };
+
+    if (!round.is_multi_day && !round.is_multi_flight) return Response.json({ rounds: [await hydrate(round)] });
 
     const anchorId = round.parent_round_id || round.id;
 
@@ -73,6 +92,8 @@ Deno.serve(async (req) => {
     const seen = new Set();
     allSeries = allSeries.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)))
       .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    allSeries = await Promise.all(allSeries.map(hydrate));
 
     return Response.json({ rounds: allSeries });
   } catch (error) {

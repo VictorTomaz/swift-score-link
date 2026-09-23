@@ -41,6 +41,7 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
           player_id: playerId,
           player_name: scanned.playerName || roundPlayer?.name,
           scores,
+          flags: Array.isArray(scanned.flags) && scanned.flags.length === 18 ? scanned.flags : Array(18).fill(''),
           teamMemberIds: scanned.teamMemberIds,
         };
       });
@@ -60,8 +61,17 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
       newHoleScores[holeIdx] = (isNaN(num) || num < 1 || num > 20) ? '' : String(num);
     }
     newScores[playerIdx].scores = newHoleScores;
+    // Once the organizer corrects a cell, its flag has served its purpose.
+    const newFlags = [...(newScores[playerIdx].flags || Array(18).fill(''))];
+    newFlags[holeIdx] = '';
+    newScores[playerIdx].flags = newFlags;
     setPlayerScores(newScores);
   };
+
+  const cellClass = (flag) =>
+    `w-14 h-14 text-center text-xl font-bold border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent relative z-10 ${
+      flag ? "scan-flagged-cell bg-amber-100 border-amber-500" : ""
+    }`;
 
   const getScoreValue = (score) => {
     if (score === null || score === undefined || score === '' || score === 0 || score === '0') return '';
@@ -90,6 +100,8 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
   const frontTotal = sumNine(scores.slice(0, 9));
   const backTotal = sumNine(scores.slice(9, 18));
   const grandTotal = (frontTotal === null || backTotal === null) ? null : frontTotal + backTotal;
+  const activeFlags = activePlayer?.flags || Array(18).fill('');
+  const totalFlagged = playerScores.reduce((n, p) => n + (p.flags || []).filter(Boolean).length, 0);
 
   if (!isOpen) return null;
 
@@ -114,6 +126,12 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
         <div className="p-3 sm:p-4 text-xs text-muted-foreground space-y-1 shrink-0">
           <p>Tap any cell to correct the scanned value. Type "X" for DQ/pickup (no score on a hole).</p>
           <p className="text-amber-600 font-medium">⚠️ Verify back-nine scores (holes 10-18) are in the correct columns for each player.</p>
+          {totalFlagged > 0 && (
+            <p className="text-amber-700 font-medium">
+              <span className="inline-block w-3 h-3 rounded-sm bg-amber-100 border border-amber-500 align-middle mr-1" />
+              {totalFlagged} cell{totalFlagged > 1 ? 's' : ''} highlighted for review — hold to see why.
+            </p>
+          )}
         </div>
 
         {/* Player tabs */}
@@ -129,6 +147,9 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
               }`}
             >
               {player.player_name || `Player ${idx + 1}`}
+              {(player.flags || []).some(Boolean) && (
+                <span className="ml-2 inline-block w-2 h-2 rounded-full bg-amber-500 align-middle" />
+              )}
             </button>
           ))}
         </div>
@@ -208,7 +229,8 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
                                 e.target.select();
                                 e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                               }}
-                              className="w-14 h-14 text-center text-xl font-bold border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent relative z-10"
+                              title={activeFlags[i] || undefined}
+                              className={cellClass(activeFlags[i])}
                               placeholder="-"
                               maxLength={2}
                             />
@@ -238,7 +260,8 @@ export default function ScanReviewModal({ isOpen, onClose, onSave, scannedData, 
                                 e.target.select();
                                 e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                               }}
-                              className="w-14 h-14 text-center text-xl font-bold border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent relative z-10"
+                              title={activeFlags[i + 9] || undefined}
+                              className={cellClass(activeFlags[i + 9])}
                               placeholder="-"
                               maxLength={2}
                             />

@@ -76,6 +76,8 @@ export default function Dashboard() {
         results: null,
         kp_winners: [],
         event_name: `${round.event_name} (Copy)`,
+        champion_payout_mode: "title_only",
+        flight_champions: [],
         scorecard_pdf_url: undefined,
         locked_format: undefined,
       };

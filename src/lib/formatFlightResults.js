@@ -1,4 +1,5 @@
 import { computeStandingsDisplay, computeTeamStandingsDisplay, rankLabel } from "@/lib/standingsRanks";
+import { orderChampionsFirst } from "@/lib/championOrder";
 
 /**
  * Builds the per-flight standings + payout sections for the shareable results
@@ -73,14 +74,15 @@ export function buildPlayerFlightLabels(results, flightData = {}) {
   return labels;
 }
 
-export function formatFlightSections(results, isStableford, flightData = {}, round = null) {
+export function formatFlightSections(results, isStableford, flightData = {}, round = null, holdMain = false) {
   const flights = (flightData.flights?.length > 0)
     ? flightData.flights
     : deriveFlights(results);
   if (flights.length === 0) return [];
 
   const lines = [];
-  const payouts = results.payouts || [];
+  // While the main purse is held, no flight shows gross/net dollar amounts.
+  const payouts = holdMain ? [] : (results.payouts || []);
   const flightMap = flightData.playerFlightMap || {};
   const isTeamEvent = !!(round?.game_type && round.game_type !== "individual");
   const teamFormatLabel = (() => {
@@ -117,7 +119,7 @@ export function formatFlightSections(results, isStableford, flightData = {}, rou
         teamGross.forEach(t => {
           const rank = rankLabel(tgDisplay[t.team_id]);
           if (t.disqualified) { lines.push(`${rank}. ${t.team_name} — DQ`); return; }
-          const perMember = t.gross_payout > 0 && t.members?.length ? t.gross_payout / t.members.length : 0;
+          const perMember = !holdMain && t.gross_payout > 0 && t.members?.length ? t.gross_payout / t.members.length : 0;
           lines.push(`${rank}. ${t.team_name} — ${t.best_ball_gross}${isStableford ? " pts" : ""}${perMember > 0.01 ? ` — $${perMember.toFixed(2)}/player` : ""}`);
         });
         lines.push("");
@@ -127,7 +129,7 @@ export function formatFlightSections(results, isStableford, flightData = {}, rou
         teamNet.forEach(t => {
           const rank = rankLabel(tnDisplay[t.team_id]);
           if (t.disqualified) { lines.push(`${rank}. ${t.team_name} — DQ`); return; }
-          const perMember = t.net_payout > 0 && t.members?.length ? t.net_payout / t.members.length : 0;
+          const perMember = !holdMain && t.net_payout > 0 && t.members?.length ? t.net_payout / t.members.length : 0;
           lines.push(`${rank}. ${t.team_name} — ${t.best_ball_net}${isStableford ? " pts" : ""}${perMember > 0.01 ? ` — $${perMember.toFixed(2)}/player` : ""}`);
         });
         lines.push("");
@@ -135,7 +137,7 @@ export function formatFlightSections(results, isStableford, flightData = {}, rou
       return;
     }
 
-    const gross = f.gross_results || [];
+    const gross = orderChampionsFirst(f.gross_results || [], round);
     const net = f.net_results || [];
     if (gross.length === 0 && net.length === 0) return;
 

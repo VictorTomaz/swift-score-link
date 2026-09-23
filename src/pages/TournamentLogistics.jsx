@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { canUseWindowPrint } from "@/lib/utils";
 import { shareOrDownloadPdf } from "@/lib/fileShare";
 import { generateTimeSlots, assignTeeTimes, ALGORITHMS } from "@/lib/teeSheetGenerator";
+import { getSeedSourceRounds, individualSeedScores, teamSeedScoresByPlayer, priorTeamOfPlayer } from "@/lib/seedByScore";
 import SendTeeSheetModal from "@/components/teeSheet/SendTeeSheetModal";
 import ScorecardHtmlPreview from "@/components/scorecard/ScorecardHtmlPreview";
 import BlankScorecardPrintButton from "@/components/scorecard/BlankScorecardPrintButton";
@@ -25,6 +26,7 @@ import { Switch } from "@/components/ui/switch";
 import VegasAllowanceInput from "@/components/setup-wizard/VegasAllowanceInput";
 import CombinedTeeSheet from "@/components/logistics/CombinedTeeSheet";
 import LogisticsRoundSelector from "@/components/logistics/LogisticsRoundSelector";
+import ChampionLogisticsCard from "@/components/logistics/ChampionLogisticsCard";
 
 const DEFAULT_CONFIG = { start_time: "08:00", interval_minutes: 8, group_size: 4, extra_slots: 0 };
 
@@ -506,57 +508,24 @@ export default function TournamentLogistics() {
     toast.success(`Compacted ${filledSlots.length} group${filledSlots.length === 1 ? "" : "s"} up`);
   };
 
-  // Find the round whose results should seed THIS round's tee times.
-  // Multi-flight tournaments have different players per flight, so seeding a
-  // flight by the parent (Flight 1) round's scores is meaningless — those are
-  // different people. Seed by the most recent prior round in the SAME flight
-  // instead. Single-flight multi-day series seed by the parent (Day 1) round.
-  const findSeedSourceRound = useCallback(async (round) => {
-    if (round?.is_multi_flight) {
-      const sameFlightPrior = rounds
-        .filter(r =>
-          r.id !== round.id &&
-          (r.flight_number || 1) === (round.flight_number || 1) &&
-          r.date && round.date &&
-          new Date(r.date.replace(/-/g, '/')) < new Date(round.date.replace(/-/g, '/'))
-        )
-        .sort((a, b) => new Date(b.date.replace(/-/g, '/')) - new Date(a.date.replace(/-/g, '/')));
-      if (sameFlightPrior.length > 0) return sameFlightPrior[0];
-      return null;
-    }
-    if (round?.parent_round_id) {
-      try {
-        return await base44.entities.Round.get(round.parent_round_id);
-      } catch (err) {
-        return null;
-      }
-    }
-    return null;
-  }, [rounds]);
-
   const handleSeedIndividualByScore = async () => {
     if (!selectedRound?.parent_round_id) {
       toast.error("Seed by Score needs a multi-day series — link this round to a Day 1 parent first.");
       return;
     }
-    const seedSource = await findSeedSourceRound(selectedRound);
-    if (!seedSource) {
-      toast.error(selectedRound?.is_multi_flight
-        ? "No prior day scored in this flight — score the earlier day first."
-        : "Could not load the parent round results.");
+    const sources = await getSeedSourceRounds(selectedRound);
+    if (!sources.length) {
+      toast.error("No prior day found for this round — score the earlier day first.");
       return;
     }
-    const pr = seedSource?.results;
     const seedType = seedScoreType === "gross" ? "gross" : "net";
-    const indivResults = (seedType === "gross" ? pr?.gross_results : pr?.net_results) || [];
-    if (!indivResults.length) {
-      toast.error(`No ${seedType} scores found in the seed round — score the earlier day first.`);
+    const totals = individualSeedScores(sources, seedType);
+    if (!Object.keys(totals).length) {
+      toast.error(`No ${seedType} scores found in the earlier day${sources.length > 1 ? "s" : ""} — score them first.`);
       return;
     }
-    const scoreOf = (r) => (seedType === "gross" ? r.gross_total : r.net_total) ?? 9999;
-    const ranked = [...indivResults].filter((r) => !r.disqualified).sort((a, b) => scoreOf(a) - scoreOf(b));
     const rankById = {};
-    ranked.forEach((r, i) => { rankById[r.player_id] = i; });
+    Object.keys(totals).sort((a, b) => totals[a] - totals[b]).forEach((pid, i) => { rankById[pid] = i; });
     // Worst first → earliest slots; best (leaders) → latest slots (go out last).
     const rosterRanked = [...players].sort((a, b) => (rankById[b.player_id] ?? 9999) - (rankById[a.player_id] ?? 9999));
     const groupSize = config.group_size || 4;
@@ -583,7 +552,7 @@ export default function TournamentLogistics() {
     setAssignments(newAssignments);
     await persistAssignments(groupTags, newAssignments);
     const seeded = players.filter((p) => rankById[p.player_id] != null).length;
-    toast.success(`Seeded ${seeded} player${seeded === 1 ? "" : "s"} by Day 1 ${seedType} score — leaders go out last`);
+    toast.success(`Seeded ${seeded} player${seeded === 1 ? "" : "s"} by ${sources.length > 1 ? "cumulative" : "Day 1"} ${seedType} score — leaders go out last`);
   };
 
   const handleGenerate = () => {
@@ -1060,21 +1029,36 @@ export default function TournamentLogistics() {
     // the leaders out last. Existing tee_group tags are preserved — only tee
     // times are assigned. Requires a multi-day child round with a scored parent.
     if (teamPairStyle === "seed_by_score") {
-      const seedSource = await findSeedSourceRound(selectedRound);
-      if (!seedSource) {
-        toast.error(selectedRound?.is_multi_flight
-          ? "No prior day scored in this flight — score the earlier day first."
-          : "Could not load the parent round results.");
+      const sources = await getSeedSourceRounds(selectedRound);
+      if (!sources.length) {
+        toast.error("No prior day found for this round — score the earlier day first.");
         return;
       }
-      const pr = seedSource?.results;
       const seedType = seedScoreType === "gross" ? "gross" : "net";
-      const teamResults = (seedType === "gross" ? pr?.team_gross_results : pr?.team_net_results) || [];
-      if (!teamResults.length) {
-        toast.error(`No ${seedType} team scores found in the seed round — score the earlier day first.`);
+      const byPlayer = teamSeedScoresByPlayer(sources, seedType);
+      if (!Object.keys(byPlayer).length) {
+        toast.error(`No ${seedType} team scores found in the earlier day${sources.length > 1 ? "s" : ""} — score them first.`);
         return;
       }
-      const tagOf = (p) => (groupTags[p.player_id] || p.tee_group || "").trim();
+      // Untagged players keep their Day 1 teammates: group them by prior team
+      // and give each group a fresh tag so the seeding has teams to place.
+      const seedTags = { ...groupTags };
+      const priorTeam = priorTeamOfPlayer(sources);
+      const usedTags = new Set(players.map((p) => (groupTags[p.player_id] || p.tee_group || "").trim()).filter(Boolean));
+      const byPriorTeam = {};
+      players.forEach((p) => {
+        const tag = (groupTags[p.player_id] || p.tee_group || "").trim();
+        if (tag || !priorTeam[p.player_id]) return;
+        (byPriorTeam[priorTeam[p.player_id]] ||= []).push(p);
+      });
+      let li = 0;
+      Object.keys(byPriorTeam).sort().forEach((prev) => {
+        while (li < tagLabels.length && usedTags.has(tagLabels[li])) li++;
+        const lbl = li < tagLabels.length ? tagLabels[li++] : `T${li++ + 1}`;
+        usedTags.add(lbl);
+        byPriorTeam[prev].forEach((p) => { seedTags[p.player_id] = lbl; });
+      });
+      const tagOf = (p) => (seedTags[p.player_id] || p.tee_group || "").trim();
       const teamPlayers = {};
       const untagged = [];
       players.forEach((p) => {
@@ -1086,16 +1070,14 @@ export default function TournamentLogistics() {
           untagged.push(p);
         }
       });
-      // Best (lowest score) → worst, using the selected gross/net standings.
-      const scoreOf = (t) => (seedType === "gross" ? t.best_ball_gross : t.best_ball_net) ?? 9999;
-      const ranked = [...teamResults]
-        .filter((t) => !t.disqualified)
-        .sort((a, b) => scoreOf(a) - scoreOf(b));
-      // Ranked teams present in this roster, then any untagged-roster teams (no score → worst).
-      const orderedTeamIds = ranked.map((t) => t.team_id).filter((id) => teamPlayers[id]);
-      Object.keys(teamPlayers)
-        .sort()
-        .forEach((id) => { if (!orderedTeamIds.includes(id)) orderedTeamIds.push(id); });
+      // Team score = its members' prior team score (matched by player, so
+      // re-tagged teams still seed). Teams with no prior score rank worst.
+      const teamScore = (id) => {
+        const s = teamPlayers[id].map((p) => byPlayer[p.player_id]).filter((v) => v != null);
+        return s.length ? Math.min(...s) : 9999;
+      };
+      // Best (lowest score) → worst.
+      const orderedTeamIds = Object.keys(teamPlayers).sort((a, b) => teamScore(a) - teamScore(b) || a.localeCompare(b));
 
       const teamSize = selectedRound.team_size || 2;
       const groupSize = config.group_size || 4;
@@ -1126,9 +1108,10 @@ export default function TournamentLogistics() {
         earlyCount++;
         if (earlyCount >= teamsPerSlot) { earlyCount = 0; earlySlot++; }
       }
+      setGroupTags(seedTags);
       setAssignments(newAssignments);
-      await persistAssignments(groupTags, newAssignments, updates);
-      toast.success(`Seeded ${orderedTeamIds.length} team${orderedTeamIds.length === 1 ? "" : "s"} by Day 1 ${seedType} score — leaders go out last`);
+      await persistAssignments(seedTags, newAssignments, updates);
+      toast.success(`Seeded ${orderedTeamIds.length} team${orderedTeamIds.length === 1 ? "" : "s"} by ${sources.length > 1 ? "cumulative" : "Day 1"} ${seedType} score — leaders go out last`);
       return;
     }
 
@@ -1681,16 +1664,6 @@ export default function TournamentLogistics() {
                   <span className="text-xs font-medium text-muted-foreground">Seed by:</span>
                   <div className="flex gap-1">
                     <button
-                      onClick={() => setSeedScoreType("net")}
-                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                        seedScoreType === "net"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground hover:bg-muted/80"
-                      }`}
-                    >
-                      Net
-                    </button>
-                    <button
                       onClick={() => setSeedScoreType("gross")}
                       className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
                         seedScoreType === "gross"
@@ -1699,6 +1672,16 @@ export default function TournamentLogistics() {
                       }`}
                     >
                       Gross
+                    </button>
+                    <button
+                      onClick={() => setSeedScoreType("net")}
+                      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                        seedScoreType === "net"
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-foreground hover:bg-muted/80"
+                      }`}
+                    >
+                      Net
                     </button>
                   </div>
                 </div>
@@ -1803,6 +1786,11 @@ export default function TournamentLogistics() {
           />
           </DragDropContext>
 
+          <ChampionLogisticsCard
+            key={selectedRound.id}
+            round={selectedRound}
+            onSaved={(payload) => setSelectedRound((prev) => prev ? { ...prev, ...payload } : prev)}
+          />
         </>
       )}
 

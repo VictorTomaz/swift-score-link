@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChevronLeft, Trophy, Send, Calendar, RefreshCw, Loader2 } from "lucide-react";
 import { recomputeRoundResults, hasMissingSideGames, hasStaleFlightScores } from "@/lib/recomputeResults";
+import { hydrateRoundsScores } from "@/lib/roundScores";
 import { format } from "date-fns";
 import GrossNetResults from "@/components/results/GrossNetResults";
 import TeamStandings from "@/components/results/TeamStandings";
@@ -18,6 +19,8 @@ import FlightStandings from "@/components/results/FlightStandings";
 import FieldPrizesCard from "@/components/results/FieldPrizesCard";
 import SendResultsModal from "@/components/results/SendResultsModal";
 import ResultsSection from "@/components/results/ResultsSection";
+import ChampionStatement from "@/components/results/ChampionStatement";
+import { buildChampionRows, championPurseMap } from "@/lib/flightChampions";
 import PageDescription from "@/components/PageDescription";
 import InfoTooltip from "@/components/InfoTooltip";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -73,6 +76,7 @@ export default function TournamentResults() {
           const all = [parent, ...children].filter(Boolean);
           const seen = new Set();
           rounds = all.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+          rounds = await hydrateRoundsScores(rounds);
         } catch (e2) { /* keep whatever we have */ }
       }
       return rounds;
@@ -151,7 +155,7 @@ export default function TournamentResults() {
           // team events show team standings (not individual player scores).
           const actualRes = fnToRound[String(fs.flightNumber)]?.results || {};
           return {
-            round: { id: `standings_${fs.flightNumber}`, event_name: fnToFlightName[String(fs.flightNumber)] || `Flight ${fs.flightNumber}`, course_name: finalRound.course_name, game_type: finalRound.game_type, team_mode: finalRound.team_mode },
+            round: { id: `standings_${fs.flightNumber}`, event_name: fnToFlightName[String(fs.flightNumber)] || `Flight ${fs.flightNumber}`, course_name: finalRound.course_name, game_type: finalRound.game_type, team_mode: finalRound.team_mode, champion_enabled: finalRound.champion_enabled, flight_champions: finalRound.flight_champions },
             results: {
               gross_results: fs.gross_results,
               net_results: fs.net_results,
@@ -407,6 +411,23 @@ export default function TournamentResults() {
       || ((results.deuces || []).length * (results.deuce_per_entry_amount || 0)),
   });
 
+  // Congratulations statement — declared champions if named, otherwise each
+  // flight's low gross winner.
+  const championRows = buildChampionRows(
+    finalRound,
+    flightResultsList.length > 0
+      ? flightResultsList.map(fr => ({
+          flightNumber: fr.flightNumber,
+          label: fr.flightLabel,
+          results: fr.results || {},
+        }))
+      : [{
+          flightNumber: finalRound.flight_number || 1,
+          label: finalRound.flight_name || finalRound.event_name || "Champion",
+          results,
+        }]
+  );
+
   const tournamentName = parentRound?.event_name || finalRound.event_name || "Tournament";
   const sortedRounds = [...seriesRounds].sort((a, b) => new Date(a.date) - new Date(b.date));
   const firstDate = sortedRounds[0]?.date;
@@ -535,6 +556,9 @@ export default function TournamentResults() {
           </CardContent>
         </Card>
 
+        {/* Congratulations to each flight's champion */}
+        <ChampionStatement rows={championRows} />
+
         {/* Per-Flight Results — leads the page */}
         {flightResultsList.length > 0 && (
           <div className="space-y-3">
@@ -614,7 +638,7 @@ export default function TournamentResults() {
               perFlightPayouts.map(fp => (
                 <div key={fp.flightLabel}>
                   <p className="text-sm font-bold text-foreground mb-1">{fp.flightLabel} — Final Payouts</p>
-                  <PayoutTable results={fp.flightResults} holdMainPayouts={false} />
+                  <PayoutTable results={fp.flightResults} holdMainPayouts={false} championPurses={championPurseMap(championRows)} />
                 </div>
               ))
             ) : (
@@ -622,7 +646,7 @@ export default function TournamentResults() {
                 <p className="text-sm font-bold text-foreground mb-1">
                   {finalRound?.flight_name || finalRound?.event_name || 'Tournament'} — Final Payouts
                 </p>
-                <PayoutTable results={results} holdMainPayouts={false} />
+                <PayoutTable results={results} holdMainPayouts={false} championPurses={championPurseMap(championRows)} />
               </div>
             )}
           </div>
@@ -635,6 +659,7 @@ export default function TournamentResults() {
         round={{ ...finalRound, players: allTournamentPlayers }}
         results={results}
         dayLabel={null}
+        champions={championRows}
         flightData={{
           flights: flightResultsList.map(fr => ({
             flightNumber: fr.flightNumber,

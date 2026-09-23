@@ -97,3 +97,19 @@ export function mergeScoresIntoRound(round, roundScoreMap) {
     })),
   };
 }
+
+/**
+ * Single source of truth: load a round's RoundScore records and merge them into
+ * players[].scores. Use this on EVERY round fetch that reads scores so the
+ * embedded copy on the Round record can never drift from what was saved.
+ */
+export async function hydrateRoundScores(round) {
+  if (!round?.id) return round;
+  const map = await loadRoundScores(round.id);
+  return mergeScoresIntoRound(round, map);
+}
+
+/** hydrateRoundScores for a list of rounds, in parallel. */
+export async function hydrateRoundsScores(rounds) {
+  return Promise.all((rounds || []).filter(Boolean).map(hydrateRoundScores));
+}

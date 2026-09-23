@@ -9,7 +9,7 @@ import { useSeriesRounds, isSeriesFinalDay, isFinalFlightRound, isFinalDayRaw, i
 import { computeTeamResults, applyTeamPayouts, computeTeamSkins, splitTeamSideGamePayouts, teamSideGamesActive } from "@/lib/teamScoreEngine";
 import { applyTeamSideGames } from "@/lib/teamSideGames";
 import { buildTeamNameByPlayer } from "@/lib/teamPlayerLookup";
-import { mergeScoresIntoRound } from "@/lib/roundScores";
+import { mergeScoresIntoRound, hydrateRoundScores } from "@/lib/roundScores";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,11 +37,39 @@ import SendResultsModal from "@/components/results/SendResultsModal";
 import CumulativeScorecard from "@/components/scorecard/CumulativeScorecard";
 import PageDescription from "@/components/PageDescription";
 import FinalizeWarningDialog, { findUnscoredRounds } from "@/components/results/FinalizeWarningDialog";
+import ChampionStatement from "@/components/results/ChampionStatement";
+import DeclareChampionCard from "@/components/results/DeclareChampionCard";
+import { applyChampionPayouts, getChampionConfig, buildChampionRows, championPurseMap } from "@/lib/flightChampions";
 
 export default function Results() {
   const urlParams = new URLSearchParams(window.location.search);
   const roundId = urlParams.get("id");
   const navigate = useNavigate();
+
+  // Opened without an id (e.g. the iOS wrapper restored the path but dropped
+  // the query string) — recover by jumping to the most recently updated round.
+  const [noRoundFound, setNoRoundFound] = useState(false);
+  useEffect(() => {
+    if (roundId) {
+      // Remember it so a relaunch that drops the URL can restore this round.
+      try {
+        sessionStorage.setItem('lastRoundId', roundId);
+        localStorage.setItem('lastRoundId', roundId);
+      } catch {}
+      return;
+    }
+    // Prefer the round the user was last on, then the most recently updated one.
+    let lastId = null;
+    try { lastId = sessionStorage.getItem('lastRoundId') || localStorage.getItem('lastRoundId'); } catch {}
+    if (lastId) {
+      navigate(`/Results?id=${lastId}`, { replace: true });
+      return;
+    }
+    base44.entities.Round.list('-updated_date', 1).then((rows) => {
+      if (rows?.[0]?.id) navigate(`/Results?id=${rows[0].id}`, { replace: true });
+      else setNoRoundFound(true);
+    }).catch(() => setNoRoundFound(true));
+  }, [roundId, navigate]);
 
   // Scroll to top on mount
   useEffect(() => {
@@ -71,7 +99,8 @@ export default function Results() {
         fetched = viaFilter?.[0] || null;
       }
       if (!fetched) throw new Error("Round could not be loaded. Please try again.");
-      return fetched;
+      // RoundScore is the single source of truth — never show the embedded copy.
+      return hydrateRoundScores(fetched);
     },
     enabled: !!roundId,
     retry: 2,
@@ -496,6 +525,31 @@ export default function Results() {
       };
     });
   }, [isMultiFlight, combinedResults, holdMainPayouts, flightResultsList, playerFlightPayoutMap, isHybrid, payoutDays, flightNameFor]);
+
+  // Champion / playoff declaration (opt-in per tournament). One entry per flight
+  // for a multi-flight tournament, otherwise a single entry for this round.
+  const championEnabled = getChampionConfig(round).enabled;
+  const championFlights = React.useMemo(() => {
+    if (!round) return [];
+    if (isMultiFlight && flightResultsList.length > 0) {
+      return flightResultsList.map(fr => ({
+        flightNumber: fr.flightNumber || fr.round?.flight_number || 1,
+        label: fr.flightLabel,
+        results: fr.results || {},
+      }));
+    }
+    return [{
+      flightNumber: round.flight_number || 1,
+      label: round.flight_name || round.event_name || 'Champion',
+      results: round.results || {},
+    }];
+  }, [round, isMultiFlight, flightResultsList]);
+  // Congratulations statement: declared champions when the host named them,
+  // otherwise each flight's low gross winner. Held while the main purse is held.
+  const championRows = React.useMemo(
+    () => (holdMainPayouts ? [] : buildChampionRows(round, championFlights)),
+    [holdMainPayouts, round, championFlights]
+  );
 
   // While payouts are held, the main standings block below already shows THIS
   // flight's own gross/net — so repeating it as a Per-Flight card is redundant.
@@ -1066,6 +1120,9 @@ export default function Results() {
       // (e.g. is_series_cumulative missing) — if it clears the cache, leaving and
       // returning to the app wipes the good PDF and the next print regenerates
       // one that may miss the scorecard due to the series data fetch race.
+      // Winner-take-all champion: un-split a declared flight's tie for first.
+      slimResults = applyChampionPayouts(freshRound, slimResults);
+
       slimResults._debug_entry = {
         is_multi_day: freshRound.is_multi_day,
         is_multi_flight: freshRound.is_multi_flight,
@@ -1241,12 +1298,12 @@ export default function Results() {
 
   // recomputeError is shown inline as a banner — don't block the whole page
 
-  if (isLoading || recomputeMutation.isPending) {
+  if (isLoading || recomputeMutation.isPending || (!roundId && !noRoundFound)) {
     return (
       <div className="max-w-3xl mx-auto space-y-4 pb-20 pt-20">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-64 w-full rounded-xl" />
-        <p className="text-center text-muted-foreground text-sm">{isLoading ? "Loading round..." : "Computing results..."}</p>
+        <p className="text-center text-muted-foreground text-sm">{recomputeMutation.isPending ? "Computing results..." : "Loading round..."}</p>
       </div>
     );
   }
@@ -1421,6 +1478,15 @@ export default function Results() {
             <TooltipContent><p className="text-xs">Recompute results from current scores</p></TooltipContent>
           </Tooltip>
         </div>
+
+        <ChampionStatement rows={championRows} />
+        {championEnabled && (
+          <DeclareChampionCard
+            round={round}
+            flights={championFlights}
+            seriesRounds={seriesRoundsQuery.data}
+          />
+        )}
 
         {/* Final Day toggle — hybrid: available on all rounds (including
             parent); non-hybrid: child rounds only (parent is Day 1).
@@ -1733,13 +1799,13 @@ export default function Results() {
             perFlightPayouts.map(fp => (
               <div key={fp.flightLabel} className="mt-3 tour-results-payouts">
                 <p className="text-sm font-bold text-foreground mb-1">{fp.flightLabel} — Final Payouts</p>
-                <PayoutTable results={fp.flightResults} holdMainPayouts={holdMainPayouts} payoutDays={fp.flightPayoutDays} />
+                <PayoutTable results={fp.flightResults} holdMainPayouts={holdMainPayouts} payoutDays={fp.flightPayoutDays} championPurses={championPurseMap(championRows)} />
               </div>
             ))
           )
         ) : (
           <div className="mt-3 tour-results-payouts">
-            <PayoutTable results={results} holdMainPayouts={holdMainPayouts} payoutDays={isMultiFlight && !isHybrid ? [] : (finalDayOfFlight ? payoutDays.filter(d => d.dayLabel?.startsWith(`${flightNameFor(round?.flight_number || 1)},`)) : payoutDays)} />
+            <PayoutTable results={results} holdMainPayouts={holdMainPayouts} championPurses={championPurseMap(championRows)} payoutDays={isMultiFlight && !isHybrid ? [] : (finalDayOfFlight ? payoutDays.filter(d => d.dayLabel?.startsWith(`${flightNameFor(round?.flight_number || 1)},`)) : payoutDays)} />
           </div>
         )}
         </motion.div>
@@ -1756,7 +1822,9 @@ export default function Results() {
           round={allTournamentPlayers ? { ...round, players: allTournamentPlayers } : round}
           results={results}
           dayLabel={dayLabel}
+          champions={championRows}
           flightData={isMultiDay ? {
+            holdMainPayouts,
             ...(isMultiFlight && flightResultsList.length > 0 ? {
               flights: flightResultsList.map(fr => ({
                 flightNumber: fr.flightNumber,

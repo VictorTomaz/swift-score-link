@@ -16,8 +16,15 @@ const sideTotal = (dayPayouts, playerId) => {
   return SIDE_KEYS.reduce((sum, k) => sum + (p[k] || 0), 0);
 };
 
-export default function PayoutTable({ results, holdMainPayouts, payoutDays }) {
-  const allPayouts = results.payouts || [];
+export default function PayoutTable({ results, holdMainPayouts, payoutDays, championPurses = {} }) {
+  // Champion Purse is separate money paid on top of place payouts — fold it
+  // into each champion's row so it shows as a column and in their total.
+  const allPayouts = (results.payouts || []).map(p => {
+    const purse = championPurses[p.player_id] || 0;
+    return purse > 0
+      ? { ...p, champion_purse_payout: purse, total_payout: (p.total_payout || 0) + purse }
+      : p;
+  });
   const isMultiDay = !!(payoutDays && payoutDays.length > 1);
 
   // Build day metadata + grand total before sorting so multi-day rows rank by
@@ -58,6 +65,7 @@ export default function PayoutTable({ results, holdMainPayouts, payoutDays }) {
           { key: "net_payout", label: "Net" },
           { key: "field_gross_payout", label: "Field Gross" },
           { key: "field_net_payout", label: "Field Net" },
+          { key: "champion_purse_payout", label: "Champion Purse" },
         ].filter(c => payouts.some(p => (p[c.key] || 0) > 0));
 
     // One column per (day, side-game-type) that has any non-zero payout.
@@ -150,6 +158,7 @@ export default function PayoutTable({ results, holdMainPayouts, payoutDays }) {
     { key: "net_payout", label: "Net" },
     { key: "field_gross_payout", label: "Field Gross" },
     { key: "field_net_payout", label: "Field Net" },
+    { key: "champion_purse_payout", label: "Champion Purse" },
     { key: "kp_payout", label: "KP" },
     { key: "gross_skins_payout", label: "Gross Skins" },
     { key: "net_skins_payout", label: "Net Skins" },

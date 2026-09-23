@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { hydrateRoundsScores } from "@/lib/roundScores";
 
 /**
  * Loads every round of a tournament series (parent + all flights/days) from a
@@ -29,6 +30,7 @@ export function useTournamentSeries(anchorId) {
           const seen = new Set();
           rounds = [parent, ...children].filter(Boolean)
             .filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+          rounds = await hydrateRoundsScores(rounds);
         } catch (e2) { /* keep whatever we have */ }
       }
       return rounds;

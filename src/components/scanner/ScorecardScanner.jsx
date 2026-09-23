@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { base44 } from "@/api/base44Client";
 import { isSingleTeamScoreFormat, getEntryTeams } from "@/lib/teamScoreEntry";
+import { computeHoleFlags } from "@/lib/scanConfidence";
 import Webcam from "react-webcam";
 
 export default function ScorecardScanner({ onScanComplete, onClose, round }) {
@@ -102,6 +103,16 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
     }
   }, [showViewfinder, autoCaptureReady, checkImageStability]);
 
+  // Once the image has been steady long enough to be "Ready", wait another
+  // 2 seconds before firing on its own. The delay exists so a momentary
+  // steady patch while you're still moving the phone into position doesn't
+  // trigger a shot of the grass — the card has to actually settle.
+  useEffect(() => {
+    if (!showCaptureButton || isProcessing || capturedImage) return;
+    const timer = setTimeout(() => handleAutoCapture(), 2000);
+    return () => clearTimeout(timer);
+  }, [showCaptureButton, isProcessing, capturedImage, handleAutoCapture]);
+
   const handleOpenViewfinder = () => {
     setShowViewfinder(true);
     setError(null);
@@ -159,9 +170,32 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
 
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
 
-      const result = await base44.integrations.Core.ExtractDataFromUploadedFile({
-        file_url,
-        json_schema: {
+      const runScan = (model) => base44.integrations.Core.InvokeLLM({
+        model,
+        file_urls: [file_url],
+        prompt: `You are reading a photographed golf scorecard and extracting the handwritten scores.
+
+${isTeamScore
+  ? `This card has one row per TEAM (${expectedCount} team rows). Each row is that team's single gross score per hole.`
+  : `This card has one row per PLAYER (${expectedCount} player rows).`}
+${nameHints.length ? `Expected ${isTeamScore ? 'teams' : 'names'} on this card: ${nameHints.join(', ')}.` : ''}
+
+Rules:
+- Read every row. Do not skip rows, and do not invent rows that aren't there.
+- Each hole_N field is the score for that single hole ONLY. Never put an OUT, IN, or TOTAL column value into a hole field — those summary columns sit after hole 9 and hole 18.
+- Use the printed hole-number header row to locate every column. Do NOT count boxes left to right — scorecards contain non-hole columns (OUT, IN, TOT/TOTAL, HCP, NET, and sometimes blank spacer columns) that will shift your counting.
+- Read the front nine (holes 1-9) and the back nine (holes 10-18) as two separate passes. For the back nine, first find the header cells printed 10, 11, 12 ... 18, then read the score directly underneath each one.
+- Before returning a row, verify the back nine: the value you return for hole_18 must come from the column under the header "18" — the column immediately to its right is the IN total and must never be used. Same for hole_10: it is the first hole column AFTER the OUT total column.
+- If a back-nine box is blank, leave that hole empty rather than pulling in the neighbouring column's number.
+- Column drift in the MIDDLE of each nine is the most common failure. Work hole by hole, and for EVERY hole re-locate the printed header number directly above the box before reading it — never carry your position forward from the previous hole. Re-anchor explicitly at holes 4, 5, 6, 7, 8 and again at 13, 14, 15, 16, 17.
+- A blank box in the middle of a row does not shift the remaining scores left. Leave that hole empty and keep every later score in its own printed column.
+- Hole scores are normally 1-12. If a box is blank, leave that hole empty. If it's marked X or the player picked up, return "X".
+- Read the handwriting carefully — digits are often hurried. Watch for 4 vs 9, 1 vs 7, 3 vs 5, 6 vs 0, and 8 vs 3.
+- Pay special attention to the digit 8. An 8 is a CLOSED figure with two stacked loops — both the top and the bottom are closed. A 3 has an open left side (no closed loops), a 6 has only one closed loop at the bottom with a stem rising left, a 9 has one closed loop at the top with a tail going down, and a 0/O is one single tall closed loop with no pinch in the middle. If the digit has a pinch or crossing in its middle with closed loops above and below it, it is an 8 — return 8, not 3, 6, 9, or 0.
+- 5 versus 3 is the other frequent confusion. A 5 has a FLAT horizontal bar across its top and a single belly curving out to the right below it — the top is a straight stroke, not a curve. A 3 has NO flat top bar: it is two open right-facing bumps stacked, curved at both top and bottom, with an open left side. If you can see a straight horizontal stroke at the top of the digit, it is a 5, not a 3.
+- High scores are common and legitimate. A single box may hold a two-digit score (8, 9, 10, 11, 12) — read both digits together as ONE score for that hole, and never split "10" across two holes or drop the leading "1". Do not "correct" a high score down to something more typical.
+- Never guess. If a digit is genuinely ambiguous or the box is smudged, still return your single best reading of that box — but keep it within 1-15.`,
+        response_json_schema: {
           type: "object",
           properties: {
             players: {
@@ -186,7 +220,7 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
                   hole_7: { type: "string", description: "Score for hole 7 only" },
                   hole_8: { type: "string", description: "Score for hole 8 only" },
                   hole_9: { type: "string", description: "Score for hole 9 only, NOT the OUT total" },
-                  hole_10: { type: "string", description: "Score for hole 10 only, start of back nine" },
+                  hole_10: { type: "string", description: "Score for hole 10 only — the first hole column AFTER the OUT total column, read from under the header printed '10'" },
                   hole_11: { type: "string", description: "Score for hole 11 only" },
                   hole_12: { type: "string", description: "Score for hole 12 only" },
                   hole_13: { type: "string", description: "Score for hole 13 only" },
@@ -194,7 +228,9 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
                   hole_15: { type: "string", description: "Score for hole 15 only" },
                   hole_16: { type: "string", description: "Score for hole 16 only" },
                   hole_17: { type: "string", description: "Score for hole 17 only" },
-                  hole_18: { type: "string", description: "Score for hole 18 only, NOT the IN or TOT total" }
+                  hole_18: { type: "string", description: "Score for hole 18 only — read from under the header printed '18'. NEVER the IN or TOT/TOTAL column to its right." },
+                  out_total: { type: "string", description: "The handwritten OUT total printed after hole 9 (front-nine total). Leave empty if blank." },
+                  in_total: { type: "string", description: "The handwritten IN total printed after hole 18 (back-nine total). Leave empty if blank." }
                 },
                 required: ["player_name"]
               }
@@ -204,11 +240,16 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
         }
       });
 
-      if (result.status === "error") {
-        throw new Error(result.details || "AI extraction failed");
-      }
-
-      const extractedPlayers = result.output?.players || [];
+      // Single pass on Gemini 3.1 Pro. Measured over three real cards (216
+      // cells) Gemini was correct on every cell, including the hardest ones
+      // (a 10 and a hole-in-one 1 in the same row). The former second voter
+      // (gpt_5_4) disagreed on ~57 of those cells and was wrong on all 57 —
+      // it never caught a real error, it only flagged a third to a half of
+      // every card for review, which trains the scorer to ignore the flags.
+      // Cross-model checking can come back if a Gemini misread ever shows up,
+      // but it needs a voter that is at least as accurate as Gemini.
+      const passA = await runScan("gemini_3_1_pro");
+      const extractedPlayers = passA?.players || [];
       
       if (!extractedPlayers || extractedPlayers.length === 0) {
         throw new Error("No players found in scorecard. Please ensure the image is clear and shows all 18 holes.");
@@ -252,6 +293,7 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
             playerId: finalTeam.members[0]?.player_id,
             playerName: finalTeam.label || finalTeam.name,
             scores: [...holes],
+            flags: computeHoleFlags(holes, extracted, round?.par),
             teamMemberIds: finalTeam.memberIds,
           });
         }
@@ -290,6 +332,7 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
             playerId: finalPlayer.player_id,
             playerName: extracted?.player_name || finalPlayer?.name,
             scores: holes,
+            flags: computeHoleFlags(holes, extracted, round?.par),
           });
         }
       }
@@ -447,7 +490,7 @@ export default function ScorecardScanner({ onScanComplete, onClose, round }) {
               <div className="absolute top-4 left-1/2 transform -translate-x-1/2">
                 <div className="bg-blue-500/90 text-white px-6 py-3 rounded-full text-base font-medium flex items-center gap-2 animate-pulse">
                   <CheckCircle className="w-5 h-5" />
-                  Ready! Tap the camera button to capture
+                  Ready — capturing... or tap to shoot now
                 </div>
               </div>
             )}

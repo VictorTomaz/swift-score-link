@@ -5,6 +5,7 @@ import { computeFlightSeriesResults, computeHybridSeriesResults } from "@/lib/fl
 import { isSeriesFinalDay, isFinalDayOfFlight } from "@/hooks/useSeriesRounds";
 import { computeTeamResults, applyTeamPayouts, computeTeamSkins, splitTeamSideGamePayouts, teamSideGamesActive } from "@/lib/teamScoreEngine";
 import { applyTeamSideGames } from "@/lib/teamSideGames";
+import { applyChampionPayouts } from "@/lib/flightChampions";
 
 /**
  * Full recompute for a single round — the same logic used by Results.jsx.
@@ -243,6 +244,9 @@ export async function recomputeRoundResults(roundId, { silent = false } = {}) {
       }
     }
   }
+
+  // Winner-take-all champion: un-split a declared flight's tie for first.
+  slimResults = applyChampionPayouts(freshRound, slimResults);
 
   const updatePayload = { results: slimResults, players: mergedPlayers };
   if (!silent) updatePayload.results_pdf_url = null;

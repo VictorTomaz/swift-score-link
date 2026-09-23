@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 import { jsPDF } from 'npm:jspdf@4.0.0';
 
 // Results PDF generator — portrait page with standings + side games only (no final tally).
+// Per-flight results list EVERY player in each flight (payout shown only where won).
 
 /** Returns the score-result label (Eagle, Birdie, Par, Bogey, etc.) for a given score vs par. */
 function scoreResultLabel(score: any, par: any): string | null {
@@ -47,6 +48,15 @@ Deno.serve(async (req) => {
     // combined). Labels and per-flight sections reflect this.
     const isMultiFlight = !!round.is_multi_flight || (round.is_multi_day && round.series_type === 'multi_flight');
     const pdfSeriesLabel = isMultiFlight ? 'Flight' : 'Day';
+    // Multi-flight tournaments (non-hybrid AND hybrid): KP is a tournament-wide
+    // contest — all flights' (and days') KP pots are pooled and divided equally
+    // among all KP winner entries. Per-flight/per-day KP sections are suppressed
+    // below; the pooled KP is rendered once after all flights.
+    const isHybridPdf = !!(round.is_multi_day && round.is_multi_flight);
+    // Non-hybrid multi-flight: KP is tournament-wide (one pooled card at the end).
+    // Hybrid: KP is pooled for payout but displayed per day per flight within
+    // each flight's side games section, matching the on-screen layout.
+    const isTournamentWideKpPdf = isMultiFlight && !isHybridPdf;
 
     // Cache: return the previously-generated results PDF so repeated presses
     // (e.g. after a page refresh) return the same working PDF instead of
@@ -172,8 +182,11 @@ Deno.serve(async (req) => {
       }
       // Multi-flight: each flight pays its own gross/net/side games — only the
       // field prize (Low Gross/Net of the Field) is held until the final flight.
-      // So holdMainPayouts is false for multi-flight (gross/net always shown).
-      holdMainPayouts = !isFinal && round.series_type !== 'multi_flight';
+      // So holdMainPayouts is false for single-day multi-flight (gross/net always shown).
+      // Hybrid (multi-day + multi-flight): the main purse is held until the final
+      // day of the final flight, matching the on-screen logic.
+      const isHybridPdf = !!(round.is_multi_day && round.is_multi_flight);
+      holdMainPayouts = !isFinal && (isHybridPdf || round.series_type !== 'multi_flight');
     }
 
     const results = round.results || {};
@@ -190,7 +203,11 @@ Deno.serve(async (req) => {
     const isTeamFormat = (round.game_type && round.game_type !== 'individual') || round.team_mode === true;
     const teamGrossResults = results.team_gross_results || [];
     const teamNetResults = results.team_net_results || [];
+    // Las Vegas (1 gross / 2 net): a single combined leaderboard + one prize list.
+    const teamVegasResults = results.team_vegas_results || [];
+    const useVegas = isTeamFormat && teamVegasResults.length > 0;
     const useTeam = isTeamFormat && (teamGrossResults.length > 0 || teamNetResults.length > 0);
+    console.log('[generateResultsPdf] format:', { game_type: round.game_type, isTeamFormat, vegas: teamVegasResults.length, teamGross: teamGrossResults.length, useVegas, useTeam });
 
     // Multi-flight final results page: the final flight's results contain
     // field-wide standings + per-flight results + field prizes — label it
@@ -234,30 +251,255 @@ Deno.serve(async (req) => {
       try { pdf.addImage(logoBytes, 'JPEG', pageWidth - 0.55, 0.1, 0.4, 0.4); } catch (e) {}
     }
 
-    let y = 0.9;
+    // Helper: Field Prizes box (Low Gross/Net of the Field) — multi-flight only.
+    // Drawn at the top of the page so the overall winners are the first thing
+    // visible on the printout, ahead of the per-flight results.
+    const drawFieldPrizes = (startY: number): number => {
+      if (!isMultiFlight || !(results.field_gross_winner || results.field_net_winner)) return startY;
+      const fgWinner = results.field_gross_winner;
+      const fnWinner = results.field_net_winner;
+      const fgPrize = results.field_gross_prize || 0;
+      const fnPrize = results.field_net_prize || 0;
+      let yy = startY;
+      const neededH = 0.95;
+      if (yy + neededH > pageHeight - 1.0) {
+        pdf.addPage();
+        pdf.setFillColor(20, 83, 45); pdf.rect(0, 0, pageWidth, 0.5, 'F');
+        pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
+        pdf.text(`${headerTitle} — Field Prizes`, pageWidth / 2, 0.32, { align: 'center' });
+        pdf.setTextColor(0, 0, 0);
+        yy = 0.75;
+      }
+      const fpWidth = pageWidth - margin * 2;
+      const fpColW = (fpWidth - 0.3) / 2;
+      // Background box
+      pdf.setFillColor(237, 246, 239);
+      pdf.rect(margin, yy, fpWidth, 0.85, 'F');
+      // Trophy + title
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(20, 83, 45);
+      pdf.text('Field Prizes — Best across all flights', margin + 0.1, yy + 0.2);
+      // Left column: Low Gross of the Field
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text('LOW GROSS OF THE FIELD', margin + 0.1, yy + 0.38);
+      if (fgWinner) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(13);
+        pdf.setTextColor(0, 0, 0);
+        pdf.text(fgWinner.name || '—', margin + 0.1, yy + 0.54);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(10);
+        pdf.setTextColor(120, 120, 120);
+        const fgSub = `${fgWinner.flight || ''}${fgWinner.gross_total != null ? ' · Score: ' + fgWinner.gross_total : ''}`;
+        pdf.text(fgSub, margin + 0.1, yy + 0.68);
+      }
+      if (fgPrize > 0) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(14);
+        pdf.setTextColor(212, 160, 23);
+        pdf.text('$' + fgPrize.toFixed(2), margin + fpColW - 0.1, yy + 0.54, { align: 'right' });
+      }
+      // Right column: Low Net of the Field
+      const rx = margin + fpColW + 0.3;
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text('LOW NET OF THE FIELD', rx, yy + 0.38);
+      if (fnWinner) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(13);
+        pdf.setTextColor(0, 0, 0);
+        pdf.text(fnWinner.name || '—', rx, yy + 0.54);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(10);
+        pdf.setTextColor(120, 120, 120);
+        const fnSub = `${fnWinner.flight || ''}${fnWinner.net_total != null ? ' · Score: ' + fnWinner.net_total : ''}`;
+        pdf.text(fnSub, rx, yy + 0.68);
+      }
+      if (fnPrize > 0) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(14);
+        pdf.setTextColor(212, 160, 23);
+        pdf.text('$' + fnPrize.toFixed(2), margin + fpWidth - 0.1, yy + 0.54, { align: 'right' });
+      }
+      pdf.setTextColor(0, 0, 0);
+      return yy + 1.05;
+    };
 
-    // Helper: section title
-    const sectionTitle = (text, x, width, titleY) => {
+    // ── Champion statement (opt-in per tournament) ──
+    // One row per flight naming that flight's declared champion. A champion is
+    // skipped when a later score edit means that player no longer holds or
+    // shares the gross lead, so a stale name never prints.
+    const championRows: { player_id?: string | null; fn: number; label: string; division: string; divisionLabel: string | null; name: string; score: any; viaPlayoff: boolean; purse: number; pursePending: boolean }[] = [];
+    if (round.champion_enabled && !holdMainPayouts) {
+      const declaredChamps = (Array.isArray(round.flight_champions))
+        ? round.flight_champions
+        : [];
+      const champDivisions: string[] = Array.isArray(round.champion_divisions) && round.champion_divisions.length > 0
+        ? round.champion_divisions.filter((d: string) => d === 'gross' || d === 'net')
+        : ['gross'];
+      const showChampDivision = !(champDivisions.length === 1 && champDivisions[0] === 'gross');
+      const purseFor = (fn: number, division: string) =>
+        Number(round.champion_purse_per_flight?.[String(fn)]?.[division]) || 0;
+      const divisionLeaders = (res: any, division: string) => {
+        const key = division === 'net' ? 'net_total' : 'gross_total';
+        const rows = (res?.[division === 'net' ? 'net_results' : 'gross_results'] || []).filter((r: any) => !r.disqualified && r[key] != null);
+        if (rows.length === 0) return [];
+        const best = Math.min(...rows.map((r: any) => r[key]));
+        return rows.filter((r: any) => r[key] === best).map((r: any) => ({ ...r, score: r[key] }));
+      };
+      type ChampFlight = { fn: number; label: string; results: any };
+      let champFlights: ChampFlight[] = [];
+      const champNameByFlight: Record<number, string> = {};
+      [...(seriesRoundsCache || [])].filter(Boolean).forEach((r: any) => {
+        const fn = r.flight_number || 1;
+        if (r.flight_name && !champNameByFlight[fn]) champNameByFlight[fn] = r.flight_name;
+      });
+      if (isMultiFlight && Array.isArray(results.all_flight_standings) && results.all_flight_standings.length > 0) {
+        // Each flight's OWN cumulative standings — the combined gross_results
+        // ranks the whole field together, so reading leaders off it would crown
+        // players from other flights and print single-day scores.
+        champFlights = [...results.all_flight_standings]
+          .sort((a: any, b: any) => (a.flightNumber || 0) - (b.flightNumber || 0))
+          .map((fs: any) => ({
+            fn: fs.flightNumber || 1,
+            label: champNameByFlight[fs.flightNumber || 1] || `Flight ${fs.flightNumber || 1}`,
+            results: { gross_results: fs.gross_results || [], net_results: fs.net_results || [] },
+          }));
+      } else if (isMultiFlight && seriesRoundsCache && seriesRoundsCache.length > 0) {
+        const byFlight: Record<number, any> = {};
+        [...seriesRoundsCache].filter(Boolean).forEach((r: any) => {
+          const fn = r.flight_number || 1;
+          if (!byFlight[fn] || new Date(r.date) > new Date(byFlight[fn].date)) byFlight[fn] = r;
+        });
+        champFlights = Object.keys(byFlight)
+          .sort((a, b) => Number(a) - Number(b))
+          .map((k) => ({
+            fn: Number(k),
+            label: champNameByFlight[Number(k)] || `Flight ${k}`,
+            results: byFlight[Number(k)]?.results || {},
+          }));
+      } else {
+        champFlights = [{
+          fn: round.flight_number || 1,
+          label: round.flight_name || round.event_name || 'Champion',
+          results,
+        }];
+      }
+      champFlights.forEach((f) => champDivisions.forEach((division) => {
+        const leaders = divisionLeaders(f.results, division);
+        if (leaders.length === 0) return;
+        const purse = purseFor(f.fn, division);
+        const base = {
+          fn: f.fn,
+          label: f.label,
+          division,
+          divisionLabel: showChampDivision ? (division === 'net' ? 'Net Champion' : 'Gross Champion') : null,
+          purse,
+        };
+        const declared = declaredChamps.find((c: any) =>
+          Number(c.flight_number || 1) === f.fn && (c.division || 'gross') === division);
+        const leader = declared ? leaders.find((l: any) => l.player_id === declared.player_id) : null;
+        if (declared && leader) {
+          championRows.push({ ...base, player_id: declared.player_id, name: declared.player_name || leader.name || '—', score: leader.score, viaPlayoff: !!declared.via_playoff, pursePending: false });
+          return;
+        }
+        // No (valid) declaration — congratulate the division's low scorer(s).
+        championRows.push({
+          ...base,
+          player_id: leaders.length === 1 ? leaders[0].player_id : null,
+          name: leaders.map((l: any) => l.name || '—').join(' & '),
+          score: leaders[0].score,
+          viaPlayoff: false,
+          pursePending: purse > 0 && leaders.length > 1,
+        });
+      }));
+    }
+
+    let y = 0.9;
+    if (championRows.length > 0) {
+      const boxW = pageWidth - margin * 2;
+      const boxH = 0.62 + championRows.length * 0.42 + 0.3;
+      pdf.setFillColor(237, 246, 239);
+      pdf.rect(margin, y, boxW, boxH, 'F');
+      pdf.setDrawColor(20, 83, 45);
+      pdf.setLineWidth(0.025);
+      pdf.rect(margin, y, boxW, boxH, 'S');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(22);
+      pdf.setTextColor(20, 83, 45);
+      pdf.text(
+        championRows.length > 1 ? 'CONGRATULATIONS TO OUR CHAMPIONS!' : 'CONGRATULATIONS TO OUR CHAMPION!',
+        margin + boxW / 2,
+        y + 0.4,
+        { align: 'center' }
+      );
+      let cyC = y + 0.82;
+      championRows.forEach((cr) => {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(20);
+        pdf.setTextColor(0, 0, 0);
+        const multiChampFlights = new Set(championRows.map((r) => r.fn)).size > 1;
+        const tag = [multiChampFlights ? cr.label : null, cr.divisionLabel].filter(Boolean).join(' · ');
+        const prefix = tag ? `${tag}:  ` : '';
+        pdf.text(`${prefix}${cr.name}`, margin + 0.15, cyC);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(cr.purse > 0 ? 16 : 20);
+        pdf.setTextColor(20, 83, 45);
+        const purseText = cr.purse > 0
+          ? `   Purse $${Math.round(cr.purse)}${cr.pursePending ? ' (awaiting playoff)' : ''}`
+          : '';
+        const right = `${cr.score != null ? cr.score : ''}${cr.viaPlayoff ? '  (won playoff)' : ''}${purseText}`;
+        pdf.text(right, margin + boxW - 0.15, cyC, { align: 'right' });
+        cyC += 0.42;
+      });
+      pdf.setFont('helvetica', 'italic');
+      pdf.setFontSize(13);
+      pdf.setTextColor(70, 70, 70);
+      pdf.text(
+        championRows.length > 1
+          ? 'Well played — congratulations to each flight champion!'
+          : 'Well played — congratulations on the win!',
+        margin + 0.15,
+        cyC + 0.04
+      );
+      pdf.setTextColor(0, 0, 0);
+      y += boxH + 0.2;
+    }
+    // Multi-flight: Field Prizes (overall Low Gross/Net of the Field) go at the
+    // very top of the printout, ahead of the per-flight results.
+    y = drawFieldPrizes(y);
+
+    // Helper: section title (optional rgb for flight coloring)
+    const sectionTitle = (text, x, width, titleY, rgb?: [number, number, number]) => {
+      const [r, g, b] = rgb || [20, 83, 45];
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(14);
-      pdf.setTextColor(20, 83, 45);
+      pdf.setTextColor(r, g, b);
       pdf.text(text.toUpperCase(), x, titleY);
-      pdf.setDrawColor(20, 83, 45);
+      pdf.setDrawColor(r, g, b);
       pdf.setLineWidth(0.012);
       pdf.line(x, titleY + 0.04, x + width, titleY + 0.04);
       pdf.setTextColor(0, 0, 0);
     };
 
     // Helper: standings table (top N places)
-    const drawStandings = (data, scoreKey, payoutKey, x, width, startY, isTeam) => {
-      sectionTitle(isTeam ? (scoreKey === 'best_ball_gross' ? 'Team Gross Standings' : 'Team Net Standings') : (data === grossResults ? (isMultiFlight ? 'Field Gross Standings' : 'Gross Standings') : (isMultiFlight ? 'Field Net Standings' : 'Net Standings')), x, width, startY);
+    const drawStandings = (data, scoreKey, payoutKey, x, width, startY, isTeam, titleOverride?: string, listAll?: boolean) => {
+      sectionTitle(titleOverride || (isTeam ? (scoreKey === 'best_ball_gross' ? 'Team Gross Standings' : 'Team Net Standings') : (data === grossResults ? (isMultiFlight ? 'Field Gross Standings' : 'Gross Standings') : (isMultiFlight ? 'Field Net Standings' : 'Net Standings'))), x, width, startY);
       let cy = startY + 0.22;
       const rowH = 0.38;
-      const moneyWinners = data.filter(r => {
-        if (isTeam) return r[payoutKey] > 0;
-        const payout = payouts.find(p => p.player_id === r.player_id);
-        return payout && payout[payoutKey] > 0;
-      });
+      // Team events list EVERY team (payout shown only where one was won) so the
+      // printout mirrors the full on-screen standings. Individual events keep
+      // showing money winners only.
+      const moneyWinners = (isTeam || listAll)
+        ? data
+        : data.filter(r => {
+            const payout = payouts.find(p => p.player_id === r.player_id);
+            return payout && payout[payoutKey] > 0;
+          });
       const nameLineH = 0.17;
       for (let i = 0; i < moneyWinners.length; i++) {
         const r = moneyWinners[i];
@@ -271,6 +513,7 @@ Deno.serve(async (req) => {
             ? pdf.splitTextToSize(name, width - 0.2)
             : [name];
           const dynRowH = 0.1 + nameLines.length * nameLineH + 0.2;
+          if (cy + dynRowH > pageHeight - 0.5) break;
           pdf.setFillColor(i % 2 === 0 ? 245 : 255, i % 2 === 0 ? 245 : 255, i % 2 === 0 ? 245 : 255);
           pdf.rect(x, cy - 0.08, width, dynRowH, 'F');
           // Rank
@@ -353,10 +596,39 @@ Deno.serve(async (req) => {
       pdf.setTextColor(80, 80, 80);
       pdf.text(`Side games (skins, KPs, deuces) settle today. ${isMultiFlight ? 'Field standings' : 'Cumulative standings'} shown below.`, margin + 0.1, y + 0.42);
       y += 0.8;
+      // Today's standings, scores only (no money) — so the day's own leaderboard
+      // still prints even though the main purse is paid on the final day.
+      const infoNote = (atY: number) => {
+        pdf.setFont('helvetica', 'italic');
+        pdf.setFontSize(9);
+        pdf.setTextColor(110, 110, 110);
+        pdf.text('Informational only — purse paid on the final day.', margin, atY);
+        pdf.setTextColor(0, 0, 0);
+        return atY + 0.16;
+      };
+      if (isMultiFlight) {
+        // Per-flight blocks below show each flight's own standings for this day.
+      } else if (useVegas) {
+        y = drawStandings(teamVegasResults, 'vegas_total', 'payout', margin, pageWidth - margin * 2, y, true, "Today's Las Vegas Standings", true) + 0.1;
+        y = infoNote(y) + 0.2;
+      } else if (useTeam) {
+        const gEnd = drawStandings(teamGrossResults, 'best_ball_gross', 'gross_payout', margin, standingsWidth, y, true, "Today's Team Gross", true);
+        const nEnd = drawStandings(teamNetResults, 'best_ball_net', 'net_payout', col2X, standingsWidth, y, true, "Today's Team Net", true);
+        y = Math.max(gEnd, nEnd) + 0.1;
+        y = infoNote(y) + 0.2;
+      } else {
+        const gEnd = drawStandings(grossResults, 'gross_total', 'gross_payout', margin, standingsWidth, y, false, "Today's Gross Standings", true);
+        const nEnd = drawStandings(netResults, 'net_total', 'net_payout', col2X, standingsWidth, y, false, "Today's Net Standings", true);
+        y = Math.max(gEnd, nEnd) + 0.1;
+        y = infoNote(y) + 0.2;
+      }
     } else if (isMultiFlight) {
       // Multi-flight: skip the combined Field Standings — per-flight results
       // (each flight's own top finishers) are shown below, followed by the
       // final payouts table which includes Field Gross/Net columns.
+    } else if (useVegas) {
+      // One combined standings table, full page width.
+      y = drawStandings(teamVegasResults, 'vegas_total', 'payout', margin, pageWidth - margin * 2, y, true, 'Las Vegas — 1 Gross / 2 Net') + 0.3;
     } else {
       const grossEnd = useTeam
         ? drawStandings(teamGrossResults, 'best_ball_gross', 'gross_payout', margin, standingsWidth, y, true)
@@ -367,10 +639,7 @@ Deno.serve(async (req) => {
       y = Math.max(grossEnd, netEnd) + 0.3;
     }
 
-    // ── Side Games ──
-    // For multi-day series, render each day's side games (skins, KPs, deuces)
-    // separately — labeled "Day N — Gross Skins" etc. — so prior days' results
-    // appear in the PDF just as they do on the Results page.
+    // ── Side Games building (moved before Per-Flight Results so sideGamesByFlight is available) ──
     const buildSideGamesFor = (r: any, rResults: any, rPlayers: any[], dayPrefix: string) => {
       const sg: any[] = [];
       const rGrossSkins = rResults.gross_skins || [];
@@ -384,8 +653,10 @@ Deno.serve(async (req) => {
       // Team side games: show team name as the winner instead of the individual.
       // Aggregate format keeps side games individual (no valid "team skin").
       const isTeamEvt = !!(r.game_type && r.game_type !== 'individual');
+      // Aggregate and Las Vegas keep side games individual.
       const isAgg = r.game_type === 'team_aggregate' || (r.team_mode === true && r.team_format === 'aggregate');
-      const isTeamSg = isTeamEvt && !isAgg && r.skins_team_mode !== false;
+      const isVegasFmt = r.game_type === 'team_las_vegas' || (r.team_mode === true && r.team_format === 'las_vegas');
+      const isTeamSg = isTeamEvt && !isAgg && !isVegasFmt && r.skins_team_mode !== false;
       const lastName = (name: string) => { const parts = String(name || '').trim().split(/\s+/); return parts[parts.length - 1] || ''; };
       const teamMap: Record<string, { label: string; name: string }> = {};
       if (isTeamSg && rPlayers.length > 0) {
@@ -424,7 +695,7 @@ Deno.serve(async (req) => {
       if (showN) sg.push({ title: `${pfx}Net Skins`, items: rNetSkins.map((s: any) => ({ name: s.name, hole: s.hole, value: s.value || 0, carryover_from: s.carryover_from || [], achievement: s.achievement || scoreResultLabel(s.score, r.par?.[s.hole - 1]) })) });
       if (rKpResults.length > 0) {
         const perEntry = Number(rResults.kp_per_entry_amount) || 0;
-        sg.push({ title: `${pfx}KP Winners`, items: rKpResults.map((kp: any) => ({ name: displayName(kp.player_id), hole: kp.hole, value: perEntry })) });
+        sg.push({ title: `${pfx}KP Winners`, items: rKpResults.map((kp: any) => ({ name: displayName(kp.player_id) || kp.name || kp.player_id, hole: kp.hole, value: perEntry })) });
       }
       if (r.deuce_pot_enabled && rDeuces.length > 0) {
         const perDeuce = Number(rResults.deuce_per_entry_amount) || 0;
@@ -434,48 +705,424 @@ Deno.serve(async (req) => {
     };
 
     const sideGames: any[] = [];
+    const sideGamesByFlight: Record<number, any[]> = {};
     if ((round.is_multi_day || round.is_multi_flight) && seriesRoundsCache && seriesRoundsCache.length > 0) {
       const sorted = [...seriesRoundsCache].filter(Boolean).sort((a: any, b: any) => new Date(a.date) - new Date(b.date));
-      // Label each round's side games using the ACTUAL flight_number and
-      // day-within-flight — NOT the array index. Using the index on a hybrid
-      // tournament (2 flights × 2 days = 4 rounds) produces "Flight 1..4"
-      // instead of "Flight 1, Day 1" / "Flight 1, Day 2" / "Flight 2, Day 1" /
-      // "Flight 2, Day 2".
+      // Label each round's side games with just "Day N" (the flight number is
+      // shown by the section heading when grouping by flight).
       const isHybridSg = !!(round.is_multi_day && round.is_multi_flight);
       sorted.forEach((r: any) => {
         let dayPrefix: string;
+        let flightNum = 1;
         if (isHybridSg) {
-          const fn = r.flight_number || 1;
-          const flightRounds = sorted.filter((rr: any) => (rr.flight_number || 1) === fn)
+          flightNum = r.flight_number || 1;
+          const flightRounds = sorted.filter((rr: any) => (rr.flight_number || 1) === flightNum)
             .sort((a: any, b: any) => new Date(a.date) - new Date(b.date));
           const dayIdx = flightRounds.findIndex((rr: any) => rr.id === r.id);
-          dayPrefix = `Flight ${fn}, Day ${dayIdx + 1}`;
+          dayPrefix = `Day ${dayIdx + 1}`;
         } else if (round.is_multi_flight || round.series_type === 'multi_flight') {
-          dayPrefix = `Flight ${r.flight_number || 1}`;
+          flightNum = r.flight_number || 1;
+          dayPrefix = '';
         } else {
           dayPrefix = `Day ${sorted.findIndex((rr: any) => rr.id === r.id) + 1}`;
         }
-        sideGames.push(...buildSideGamesFor(r, r.results || {}, r.players || [], dayPrefix));
+        // Hybrid: KP is pooled tournament-wide but displayed per day per flight.
+        // Override each round's KP data with the pooled per-entry amount and
+        // only that round's winners (filtered from the combined kp_results by
+        // flight+date), so each day's side games shows its own KP winners at
+        // the pooled payout amount.
+        let rResults = r.results || {};
+        if (isHybridSg) {
+          const fn = String(r.flight_number || 1);
+          const date = r.date;
+          const dayKp = (results.kp_results || []).filter((kp: any) =>
+            String(kp.flight || 1) === fn && kp.date === date
+          );
+          // Per-round saved results don't carry flight/date tags on their KP
+          // entries, so the filter can come back empty — fall back to this
+          // round's own KP winners (still paid at the pooled per-entry amount).
+          rResults = {
+            ...rResults,
+            kp_results: dayKp.length > 0 ? dayKp : (rResults.kp_results || []),
+            kp_per_entry_amount: Number(results.kp_per_entry_amount) || 0,
+          };
+        }
+        // Non-final day printout: show only THIS day's side games.
+        if (holdMainPayouts && r.date !== round.date) return;
+        const built = buildSideGamesFor(r, rResults, r.players || [], dayPrefix);
+        // Non-hybrid multi-flight: KP is tournament-wide, so suppress the
+        // per-flight/per-day KP section here — it's rendered once after all
+        // flights. Hybrid: KP is shown per day per flight (not suppressed).
+        const builtNoKp = isTournamentWideKpPdf ? built.filter((sg: any) => !String(sg.title).includes('KP Winners')) : built;
+        sideGames.push(...builtNoKp);
+        if (!sideGamesByFlight[flightNum]) sideGamesByFlight[flightNum] = [];
+        sideGamesByFlight[flightNum].push(...builtNoKp);
       });
     } else {
       sideGames.push(...buildSideGamesFor(round, results, players, ''));
     }
 
+    // ── Per-Flight Results (multi-flight, at top of first page) ──
+    // Enlarged and moved to the top so each flight's gross/net winners are the
+    // first thing visible on the printout.
+    if (isMultiFlight && seriesRoundsCache && seriesRoundsCache.length > 0) {
+      const payoutLookupPf: Record<string, any> = {};
+      (payouts || []).forEach((p: any) => { payoutLookupPf[p.player_id] = p; });
+
+      const fieldGrossId = results.field_gross_winner?.player_id;
+      const fieldNetId = results.field_net_winner?.player_id;
+      const isHybridPf = !!(round.is_multi_day && round.is_multi_flight);
+
+      // Helper: render side-game sections full-width in a single column under each flight.
+      const drawSideGamesGrid = (sgList: any[], startY: number, headerLabel: string, flightRgb?: [number, number, number]) => {
+        const [hr, hg, hb] = flightRgb || [20, 83, 45];
+        const sgWidth = pageWidth - margin * 2;
+        const sgX = margin;
+        let cy = startY;
+        sgList.forEach((sg) => {
+          if (cy > pageHeight - 1.0) {
+            pdf.addPage();
+            pdf.setFillColor(hr, hg, hb); pdf.rect(0, 0, pageWidth, 0.5, 'F');
+            pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
+            pdf.text(`${headerLabel} — Side Games`, pageWidth / 2, 0.32, { align: 'center' });
+            pdf.setTextColor(0, 0, 0);
+            cy = 0.75;
+          }
+          sectionTitle(sg.title, sgX, sgWidth, cy, [hr, hg, hb]);
+          let iy = cy + 0.22;
+          sg.items.forEach((s, j) => {
+            if (iy > pageHeight - 0.5) {
+              pdf.addPage();
+              pdf.setFillColor(hr, hg, hb); pdf.rect(0, 0, pageWidth, 0.5, 'F');
+              pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
+              pdf.text(`${headerLabel} — Side Games (cont.)`, pageWidth / 2, 0.32, { align: 'center' });
+              iy = 0.75;
+              sectionTitle(`${sg.title} (cont.)`, sgX, sgWidth, iy, [hr, hg, hb]);
+              iy += 0.22;
+            }
+            const hasCarry = s.carryover_from && s.carryover_from.length > 0;
+            const achievementLabel = s.achievement;
+            const name = (s.name || '');
+            const nameMaxWidth = sgWidth - 1.1;
+            const nameLines = pdf.getTextWidth(name) > nameMaxWidth ? pdf.splitTextToSize(name, nameMaxWidth) : [name];
+            const nameLineH = 0.18;
+            const holeText = achievementLabel ? `Hole ${s.hole} — ${achievementLabel}` : `Hole ${s.hole}`;
+            const subText = hasCarry ? `${holeText} (carries ${s.carryover_from.join(', ')})` : holeText;
+            const subLines = hasCarry ? pdf.splitTextToSize(subText, sgWidth - 1.1) : [subText];
+            const rowH = 0.1 + nameLines.length * nameLineH + subLines.length * 0.18 + 0.08;
+            pdf.setFillColor(j % 2 === 0 ? 245 : 255, j % 2 === 0 ? 245 : 255, j % 2 === 0 ? 245 : 255);
+            pdf.rect(sgX, iy - 0.04, sgWidth, rowH, 'F');
+            pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14); pdf.setTextColor(hr, hg, hb);
+            nameLines.forEach((line, li) => { pdf.text(line, sgX + 0.05, iy + 0.08 + li * nameLineH); });
+            const subY = iy + 0.08 + nameLines.length * nameLineH + 0.04;
+            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(14); pdf.setTextColor(hr, hg, hb);
+            subLines.forEach((line, li) => { pdf.text(line, sgX + 0.05, subY + li * 0.18); });
+            if (s.value > 0) {
+              pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14); pdf.setTextColor(hr, hg, hb);
+              pdf.text('$' + s.value.toFixed(2), sgX + sgWidth - 0.05, subY, { align: 'right' });
+            }
+            iy += rowH;
+          });
+          if (sg.items.length === 0) {
+            const emptyRowH = 0.28;
+            pdf.setFillColor(245, 245, 245);
+            pdf.rect(sgX, iy - 0.06, sgWidth, emptyRowH, 'F');
+            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(14); pdf.setTextColor(hr, hg, hb);
+            pdf.text('None', sgX + 0.05, iy + 0.04);
+            iy += emptyRowH;
+          }
+          cy = iy + 0.3;
+        });
+        return cy;
+      };
+
+      type FlightBlock = { label: string; course: string; flightNumber: number; fGross: any[]; fNet: any[] };
+      let flightBlocks: FlightBlock[] = [];
+
+      // Resolve a flight's display label: use the round's custom flight_name
+      // (e.g. "Open", "Senior", "Super Senior") when set, falling back to
+      // "Flight N" only when no custom name was configured.
+      const flightNameByNum: Record<number, string> = {};
+      (seriesRoundsCache || []).forEach((r: any) => {
+        const fn = r.flight_number || 1;
+        if (r.flight_name && !flightNameByNum[fn]) flightNameByNum[fn] = r.flight_name;
+      });
+      const flightLabelFor = (fn: number): string =>
+        flightNameByNum[fn] || `Flight ${fn}`;
+
+      // Non-final day: show each flight's standings for THIS day (date-matched
+      // rounds below), not the cumulative all-flight standings.
+      if (!holdMainPayouts && isHybridPf && Array.isArray(results.all_flight_standings) && results.all_flight_standings.length > 0) {
+        flightBlocks = results.all_flight_standings
+          .sort((a: any, b: any) => (a.flightNumber || 0) - (b.flightNumber || 0))
+          .map((fs: any) => {
+            if (isTeamFormat && (fs.team_gross_results || []).length > 0) {
+              return {
+                label: flightLabelFor(fs.flightNumber || 1),
+                course: round.course_name || '',
+                flightNumber: fs.flightNumber || 1,
+                fGross: (fs.team_gross_results || []).filter((t: any) => !t.disqualified).map((t: any) => ({ name: t.team_name, gross_total: t.best_ball_gross, player_id: t.team_id, team_id: t.team_id, members: t.members || [] })),
+                fNet: (fs.team_net_results || []).filter((t: any) => !t.disqualified).map((t: any) => ({ name: t.team_name, net_total: t.best_ball_net, player_id: t.team_id, team_id: t.team_id, members: t.members || [] })),
+              };
+            }
+            return {
+              label: flightLabelFor(fs.flightNumber || 1),
+              course: round.course_name || '',
+              flightNumber: fs.flightNumber || 1,
+              fGross: (fs.gross_results || []).filter((g: any) => !g.disqualified),
+              fNet: (fs.net_results || []).filter((n: any) => !n.disqualified),
+            };
+          });
+      } else {
+        const flightMap: Record<string, any> = {};
+        const allSorted = [...seriesRoundsCache].filter(Boolean)
+          .filter((r: any) => !holdMainPayouts || r.date === round.date)
+          .sort((a: any, b: any) => new Date(a.date) - new Date(b.date));
+        allSorted.forEach((r: any) => {
+          const fn = r.flight_number || 1;
+          if (!flightMap[fn] || new Date(r.date) > new Date(flightMap[fn].date)) {
+            flightMap[fn] = r;
+          }
+        });
+        flightBlocks = Object.keys(flightMap).sort((a, b) => Number(a) - Number(b)).map(fn => {
+          const r = flightMap[fn];
+          const rRes: any = r.results || {};
+          if (isTeamFormat && (rRes.team_gross_results || []).length > 0) {
+            return {
+              label: flightLabelFor(Number(fn)),
+              course: r.course_name || '',
+              flightNumber: Number(fn),
+              fGross: (rRes.team_gross_results || []).filter((t: any) => !t.disqualified).map((t: any) => ({ name: t.team_name, gross_total: t.best_ball_gross, player_id: t.team_id, team_id: t.team_id, members: t.members || [] })),
+              fNet: (rRes.team_net_results || []).filter((t: any) => !t.disqualified).map((t: any) => ({ name: t.team_name, net_total: t.best_ball_net, player_id: t.team_id, team_id: t.team_id, members: t.members || [] })),
+            };
+          }
+          const fGrossAll: any[] = (r.id === round.id
+            ? (rRes.flight_own_gross || rRes.gross_results || [])
+            : (rRes.gross_results || [])
+          ).filter((g: any) => !g.disqualified && g.player_id !== fieldGrossId && g.player_id !== fieldNetId);
+          const fGross = fGrossAll;
+          const fNet: any[] = (r.id === round.id
+            ? (rRes.flight_own_net || rRes.net_results || [])
+            : (rRes.net_results || [])
+          ).filter((n: any) => !n.disqualified && n.player_id !== fieldNetId && n.player_id !== fieldGrossId);
+          return { label: flightLabelFor(Number(fn)), course: r.course_name || '', flightNumber: Number(fn), fGross, fNet };
+        });
+      }
+
+      // A declared playoff winner reads as THE winner: within a tie for the same
+      // gross score they're listed ahead of the players they beat. Order only —
+      // scores and payouts are untouched.
+      const champIdsPf = new Set(
+        round.champion_enabled && Array.isArray(round.flight_champions)
+          ? round.flight_champions.filter((c: any) => (c.division || 'gross') === 'gross').map((c: any) => c.player_id).filter(Boolean)
+          : []
+      );
+      if (champIdsPf.size > 0) {
+        flightBlocks = flightBlocks.map((fb: any) => ({
+          ...fb,
+          fGross: fb.fGross
+            .map((r: any, i: number) => ({ r, i }))
+            .sort((a: any, b: any) => {
+              if (a.r.gross_total === b.r.gross_total) {
+                const d = (champIdsPf.has(b.r.player_id) ? 1 : 0) - (champIdsPf.has(a.r.player_id) ? 1 : 0);
+                if (d !== 0) return d;
+              }
+              return a.i - b.i;
+            })
+            .map((x: any) => x.r),
+        }));
+      }
+
+      // Team event: build team payout lookup by summing per-player member shares
+      const teamPayoutLookupPf: Record<string, { gross: number; net: number }> = {};
+      if (isTeamFormat) {
+        flightBlocks.forEach((fb: any) => {
+          [...fb.fGross, ...fb.fNet].forEach((t: any) => {
+            if (t.team_id && t.members && !teamPayoutLookupPf[t.team_id]) {
+              let gross = 0, net = 0;
+              t.members.forEach((m: any) => {
+                gross += payoutLookupPf[m.player_id]?.gross_payout || 0;
+                net += payoutLookupPf[m.player_id]?.net_payout || 0;
+              });
+              teamPayoutLookupPf[t.team_id] = { gross, net };
+            }
+          });
+        });
+      }
+
+      // Enlarged section title
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(18);
+      pdf.setTextColor(20, 83, 45);
+      pdf.text('PER-FLIGHT RESULTS', margin, y + 0.05);
+      pdf.setDrawColor(20, 83, 45);
+      pdf.setLineWidth(0.015);
+      pdf.line(margin, y + 0.12, pageWidth - margin, y + 0.12);
+      pdf.setTextColor(0, 0, 0);
+      y += 0.35;
+
+      const scoreRightX = pageWidth - margin - 1.3;
+      const payoutRightX = pageWidth - margin - 0.05;
+      const nameMaxW = scoreRightX - margin - 0.3;
+      const pfRH = 0.28;
+
+      // Flight color palette — each flight gets a distinct color for visual
+      // identification in the printout. Colors cycle for 6+ flights.
+      const FLIGHT_COLORS: [number, number, number][] = [
+        [30, 100, 160],   // Blue
+        [128, 60, 160],   // Purple
+        [20, 130, 120],   // Teal
+        [180, 90, 30],    // Orange-brown
+        [180, 50, 50],    // Red
+        [60, 140, 60],    // Green
+      ];
+      const flightColor = (fn: number): [number, number, number] =>
+        FLIGHT_COLORS[(fn - 1) % FLIGHT_COLORS.length];
+
+      flightBlocks.forEach((fb) => {
+        if (fb.fGross.length === 0 && fb.fNet.length === 0) return;
+        const [fcR, fcG, fcB] = flightColor(fb.flightNumber);
+
+        // Flight label (enlarged) with colored accent bar
+        if (y + 0.8 > pageHeight - 0.5) { pdf.addPage(); y = margin; }
+        // Colored accent bar to the left of the flight label
+        pdf.setFillColor(fcR, fcG, fcB);
+        pdf.rect(margin, y, 0.08, 0.28, 'F');
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(16);
+        pdf.setTextColor(fcR, fcG, fcB);
+        pdf.text(fb.label, margin + 0.18, y + 0.15);
+        // Measure the label width at font size 16 (the size it was drawn at)
+        // BEFORE switching fonts — getTextWidth uses the current font size, so
+        // measuring after switching to 12pt would understate the width and
+        // cause the course name to overlap the flight label.
+        const labelWidth = pdf.getTextWidth(fb.label);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(12);
+        pdf.setTextColor(120, 120, 120);
+        pdf.text(fb.course, margin + 0.18 + labelWidth + 0.15, y + 0.15);
+        pdf.setTextColor(0, 0, 0);
+        y += 0.4;
+
+        // ── Gross (full width, score aligned, payout at far right) ──
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(12);
+        pdf.setTextColor(fcR, fcG, fcB);
+        pdf.text('Gross', margin + 0.1, y);
+        pdf.setTextColor(0, 0, 0);
+        y += 0.25;
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(14);
+        pdf.setTextColor(fcR, fcG, fcB);
+        fb.fGross.forEach((g: any, gi: number) => {
+          if (y > pageHeight - 0.5) { pdf.addPage(); y = margin; pdf.setTextColor(fcR, fcG, fcB); }
+          const nm = pdf.getTextWidth(g.name || '') > nameMaxW ? pdf.splitTextToSize(g.name || '', nameMaxW)[0] : (g.name || '');
+          pdf.text(`${gi + 1}. ${nm}`, margin + 0.1, y);
+          const grossPay = holdMainPayouts ? 0 : (isTeamFormat ? (teamPayoutLookupPf[g.player_id]?.gross || 0) : (payoutLookupPf[g.player_id]?.gross_payout || 0));
+          pdf.text(String(g.gross_total ?? '—'), scoreRightX, y, { align: 'right' });
+          if (grossPay > 0) {
+            pdf.text('$' + grossPay.toFixed(2), payoutRightX, y, { align: 'right' });
+          }
+          y += pfRH;
+        });
+
+        // ── Net (full width, score aligned, payout at far right) ──
+        y += 0.1;
+        if (y + 0.5 > pageHeight - 0.5) { pdf.addPage(); y = margin; }
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(12);
+        pdf.setTextColor(fcR, fcG, fcB);
+        pdf.text('Net', margin + 0.1, y);
+        pdf.setTextColor(0, 0, 0);
+        y += 0.25;
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(14);
+        pdf.setTextColor(fcR, fcG, fcB);
+        fb.fNet.forEach((n: any, ni: number) => {
+          if (y > pageHeight - 0.5) { pdf.addPage(); y = margin; pdf.setTextColor(fcR, fcG, fcB); }
+          const nm = pdf.getTextWidth(n.name || '') > nameMaxW ? pdf.splitTextToSize(n.name || '', nameMaxW)[0] : (n.name || '');
+          pdf.text(`${ni + 1}. ${nm}`, margin + 0.1, y);
+          const netPay = holdMainPayouts ? 0 : (isTeamFormat ? (teamPayoutLookupPf[n.player_id]?.net || 0) : (payoutLookupPf[n.player_id]?.net_payout || 0));
+          pdf.text(String(n.net_total ?? '—'), scoreRightX, y, { align: 'right' });
+          if (netPay > 0) {
+            pdf.text('$' + netPay.toFixed(2), payoutRightX, y, { align: 'right' });
+          }
+          y += pfRH;
+        });
+        pdf.setTextColor(0, 0, 0);
+        y += 0.15;
+
+        // Side games for this flight (grouped underneath the flight's standings)
+        const flightSgs = sideGamesByFlight[fb.flightNumber] || [];
+        if (flightSgs.length > 0) {
+          y += 0.1;
+          y = drawSideGamesGrid(flightSgs, y, fb.label, [fcR, fcG, fcB]) + 0.2;
+        }
+        // Separator line between flights (colored to match the flight)
+        pdf.setDrawColor(fcR, fcG, fcB);
+        pdf.setLineWidth(0.015);
+        pdf.line(margin, y, pageWidth - margin, y);
+        y += 0.25;
+      });
+      y += 0.2;
+
+      // ── Tournament-wide KP (multi-flight: non-hybrid + hybrid) ──
+      // KP pots from all flights (and days, for hybrid) are pooled and divided
+      // equally among all KP winner entries. Rendered once here (per-flight/
+      // per-day KP sections were suppressed above).
+      if (isTournamentWideKpPdf && (results.kp_results || []).length > 0) {
+        const kpPerEntry = Number(results.kp_per_entry_amount) || 0;
+        const kpPlayers = players || [];
+        const kpSg = {
+          title: 'KP Winners (Tournament)',
+          items: (results.kp_results || []).map((kp: any) => ({
+            name: kpPlayers.find((p: any) => p.player_id === kp.player_id)?.name || kp.name || kp.player_id,
+            hole: kp.hole,
+            value: kpPerEntry,
+          })),
+        };
+        y = drawSideGamesGrid([kpSg], y, 'Tournament KP', [20, 83, 45]) + 0.2;
+      }
+    }
+
+    // ── Side Games ──
     // Draw side games in a 2-column grid, auto-sized to fill remaining page
     const sgWidth = (pageWidth - margin * 2 - 0.3) / 2;
     const sgColX = [margin, margin + sgWidth + 0.3];
     const colEndY = [y, y];
-    sideGames.forEach((sg, i) => {
+    if (!isMultiFlight) sideGames.forEach((sg, i) => {
       // Pick the column that ends higher (less content so far)
       const col = colEndY[0] <= colEndY[1] ? 0 : 1;
       const sgX = sgColX[col];
-      const sgY = colEndY[col];
+      let sgY = colEndY[col];
 
-      if (sgY > pageHeight - 1.0) return; // skip if off page
+      if (sgY > pageHeight - 1.0) {
+        pdf.addPage();
+        pdf.setFillColor(20, 83, 45); pdf.rect(0, 0, pageWidth, 0.5, 'F');
+        pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
+        pdf.text(`${headerTitle} — Side Games`, pageWidth / 2, 0.32, { align: 'center' });
+        pdf.setTextColor(0, 0, 0);
+        sgY = 0.75;
+        colEndY[0] = sgY;
+        colEndY[1] = sgY;
+      }
 
       sectionTitle(sg.title, sgX, sgWidth, sgY);
       let cy = sgY + 0.22;
-      sg.items.slice(0, 12).forEach((s, j) => {
+      sg.items.forEach((s, j) => {
+        // Page break within a section when content overflows the page
+        if (cy > pageHeight - 0.5) {
+          pdf.addPage();
+          pdf.setFillColor(20, 83, 45); pdf.rect(0, 0, pageWidth, 0.5, 'F');
+          pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
+          pdf.text(`${headerTitle} — Side Games (cont.)`, pageWidth / 2, 0.32, { align: 'center' });
+          pdf.setTextColor(0, 0, 0);
+          cy = 0.75;
+          colEndY[0] = cy;
+          colEndY[1] = cy;
+          sectionTitle(`${sg.title} (cont.)`, sgX, sgWidth, cy);
+          cy += 0.22;
+        }
         const hasCarry = s.carryover_from && s.carryover_from.length > 0;
         const achievementLabel = s.achievement;
         // Full winner name wraps on top; hole + amount render underneath the name
@@ -534,226 +1181,8 @@ Deno.serve(async (req) => {
       colEndY[col] = cy + 0.3;
     });
 
-    // ── Per-Flight Results (multi-flight only) ──
-    // For multi-flight tournaments, show each flight's own gross/net top finishers
-    // in a compact section — so the printout includes all flights' results alongside
-    // the combined Field Standings above.
-    // IMPORTANT: sync y to the bottom of the side-games grid first — colEndY
-    // tracks each column's height, but y was last set before side games were
-    // drawn, so using it directly causes the Per-Flight section to overlap the
-    // side games above it.
-    y = Math.max(colEndY[0], colEndY[1]) + 0.1;
-
-    // ── Field Prizes (multi-flight only) ──
-    // Highlights the Low Gross of the Field and Low Net of the Field winners,
-    // mirroring the on-screen FieldPrizesCard.
-    if (isMultiFlight && (results.field_gross_winner || results.field_net_winner)) {
-      const fgWinner = results.field_gross_winner;
-      const fnWinner = results.field_net_winner;
-      const fgPrize = results.field_gross_prize || 0;
-      const fnPrize = results.field_net_prize || 0;
-      const neededH = 0.95;
-      if (y + neededH > pageHeight - 1.0) {
-        pdf.addPage();
-        pdf.setFillColor(20, 83, 45); pdf.rect(0, 0, pageWidth, 0.5, 'F');
-        pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
-        pdf.text(`${headerTitle} — Field Prizes`, pageWidth / 2, 0.32, { align: 'center' });
-        pdf.setTextColor(0, 0, 0);
-        y = 0.75;
-      }
-      const fpWidth = pageWidth - margin * 2;
-      const fpColW = (fpWidth - 0.3) / 2;
-      // Background box
-      pdf.setFillColor(237, 246, 239);
-      pdf.rect(margin, y, fpWidth, 0.85, 'F');
-      // Trophy + title
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(12);
-      pdf.setTextColor(20, 83, 45);
-      pdf.text('Field Prizes — Best across all flights', margin + 0.1, y + 0.2);
-      // Left column: Low Gross of the Field
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(100, 100, 100);
-      pdf.text('LOW GROSS OF THE FIELD', margin + 0.1, y + 0.38);
-      if (fgWinner) {
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(13);
-        pdf.setTextColor(0, 0, 0);
-        pdf.text(fgWinner.name || '—', margin + 0.1, y + 0.54);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(10);
-        pdf.setTextColor(120, 120, 120);
-        const fgSub = `${fgWinner.flight || ''}${fgWinner.gross_total != null ? ' · Score: ' + fgWinner.gross_total : ''}`;
-        pdf.text(fgSub, margin + 0.1, y + 0.68);
-      }
-      if (fgPrize > 0) {
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(14);
-        pdf.setTextColor(212, 160, 23);
-        pdf.text('$' + fgPrize.toFixed(2), margin + fpColW - 0.1, y + 0.54, { align: 'right' });
-      }
-      // Right column: Low Net of the Field
-      const rx = margin + fpColW + 0.3;
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(100, 100, 100);
-      pdf.text('LOW NET OF THE FIELD', rx, y + 0.38);
-      if (fnWinner) {
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(13);
-        pdf.setTextColor(0, 0, 0);
-        pdf.text(fnWinner.name || '—', rx, y + 0.54);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(10);
-        pdf.setTextColor(120, 120, 120);
-        const fnSub = `${fnWinner.flight || ''}${fnWinner.net_total != null ? ' · Score: ' + fnWinner.net_total : ''}`;
-        pdf.text(fnSub, rx, y + 0.68);
-      }
-      if (fnPrize > 0) {
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(14);
-        pdf.setTextColor(212, 160, 23);
-        pdf.text('$' + fnPrize.toFixed(2), margin + fpWidth - 0.1, y + 0.54, { align: 'right' });
-      }
-      pdf.setTextColor(0, 0, 0);
-      y += 1.05;
-    }
-
-    if (isMultiFlight && seriesRoundsCache && seriesRoundsCache.length > 0) {
-      // Build payout lookup from combined results (all flights)
-      const payoutLookup: Record<string, any> = {};
-      (payouts || []).forEach((p: any) => { payoutLookup[p.player_id] = p; });
-
-      // Build ONE block per flight (not one per round). For hybrid tournaments
-      // (2 flights × 2 days = 4 series rounds), iterating over all rounds
-      // produces 4 redundant blocks. Instead, deduplicate by flight_number.
-      const fieldGrossId = results.field_gross_winner?.player_id;
-      const fieldNetId = results.field_net_winner?.player_id;
-      const isHybridPf = !!(round.is_multi_day && round.is_multi_flight);
-
-      type FlightBlock = { label: string; course: string; fGross: any[]; fNet: any[] };
-      let flightBlocks: FlightBlock[] = [];
-
-      if (isHybridPf && Array.isArray(results.all_flight_standings) && results.all_flight_standings.length > 0) {
-        // Hybrid: use all_flight_standings from the final round's saved results —
-        // it has cumulative per-flight standings, and field winners + each
-        // flight's gross winner are already removed from net standings.
-        flightBlocks = results.all_flight_standings
-          .sort((a: any, b: any) => (a.flightNumber || 0) - (b.flightNumber || 0))
-          .map((fs: any) => ({
-            label: `Flight ${fs.flightNumber}`,
-            course: round.course_name || '',
-            fGross: (fs.gross_results || []).filter((g: any) => !g.disqualified).slice(0, 3),
-            fNet: (fs.net_results || []).filter((n: any) => !n.disqualified).slice(0, 3),
-          }));
-      } else {
-        // Non-hybrid or no all_flight_standings: deduplicate by flight_number,
-        // using the latest-dated round per flight.
-        const flightMap: Record<string, any> = {};
-        const allSorted = [...seriesRoundsCache].filter(Boolean).sort((a: any, b: any) => new Date(a.date) - new Date(b.date));
-        allSorted.forEach((r: any) => {
-          const fn = r.flight_number || 1;
-          if (!flightMap[fn] || new Date(r.date) > new Date(flightMap[fn].date)) {
-            flightMap[fn] = r;
-          }
-        });
-        flightBlocks = Object.keys(flightMap).sort((a, b) => Number(a) - Number(b)).map(fn => {
-          const r = flightMap[fn];
-          const rRes: any = r.results || {};
-          const fGrossAll: any[] = (r.id === round.id
-            ? (rRes.flight_own_gross || [])
-            : (rRes.gross_results || [])
-          ).filter((g: any) => !g.disqualified && g.player_id !== fieldGrossId && g.player_id !== fieldNetId);
-          const flightGrossWinnerId = fGrossAll[0]?.player_id;
-          const fGross = fGrossAll.slice(0, 3);
-          const fNet: any[] = (r.id === round.id
-            ? (rRes.flight_own_net || [])
-            : (rRes.net_results || [])
-          ).filter((n: any) => !n.disqualified && n.player_id !== fieldNetId && n.player_id !== fieldGrossId && n.player_id !== flightGrossWinnerId).slice(0, 3);
-          return { label: `Flight ${fn}`, course: r.course_name || '', fGross, fNet };
-        });
-      }
-
-      const flightNeededH = 0.3 + flightBlocks.length * 0.45 + 0.2;
-      if (y + flightNeededH > pageHeight - 1.0) {
-        pdf.addPage();
-        pdf.setFillColor(20, 83, 45); pdf.rect(0, 0, pageWidth, 0.5, 'F');
-        pdf.setTextColor(255, 255, 255); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(16);
-        pdf.text(`${headerTitle} — Per-Flight Results`, pageWidth / 2, 0.32, { align: 'center' });
-        pdf.setTextColor(0, 0, 0);
-        y = 0.75;
-      }
-      sectionTitle('Per-Flight Results', margin, pageWidth - margin * 2, y);
-      y += 0.35;
-      const flightColW = (pageWidth - margin * 2 - 0.3) / 2;
-
-      flightBlocks.forEach((fb) => {
-        if (fb.fGross.length === 0 && fb.fNet.length === 0) return;
-        const flightBlockH = 0.35 + Math.max(fb.fGross.length, fb.fNet.length, 1) * 0.2 + 0.2;
-        if (y + flightBlockH > pageHeight - 0.5) { pdf.addPage(); y = margin; }
-        // Flight label
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(13);
-        pdf.setTextColor(20, 83, 45);
-        pdf.text(fb.label, margin + 0.05, y + 0.15);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(10);
-        pdf.setTextColor(120, 120, 120);
-        pdf.text(fb.course, margin + 0.05 + pdf.getTextWidth(fb.label) + 0.15, y + 0.15);
-        // Gross/Net labels
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(9);
-        pdf.setTextColor(150, 150, 150);
-        pdf.text('Gross', margin + 0.1, y + 0.33);
-        pdf.text('Net', margin + flightColW + 0.35, y + 0.33);
-        // Gross top 3 — name, score, and payout amount
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(10);
-        pdf.setTextColor(0, 0, 0);
-        fb.fGross.forEach((g: any, gi: number) => {
-          const rowY = y + 0.33 + (gi + 1) * 0.2;
-          const nm = pdf.getTextWidth(g.name || '') > flightColW - 1.5 ? pdf.splitTextToSize(g.name || '', flightColW - 1.5)[0] : (g.name || '');
-          pdf.text(`${gi + 1}. ${nm}`, margin + 0.1, rowY);
-          const grossPay = payoutLookup[g.player_id]?.gross_payout || 0;
-          if (grossPay > 0) {
-            pdf.text(String(g.gross_total ?? '—'), margin + flightColW - 0.65, rowY, { align: 'right' });
-            pdf.setFont('helvetica', 'bold');
-            pdf.setTextColor(212, 160, 23);
-            pdf.text('$' + grossPay.toFixed(2), margin + flightColW - 0.05, rowY, { align: 'right' });
-            pdf.setTextColor(0, 0, 0);
-          } else {
-            pdf.text(String(g.gross_total ?? '—'), margin + flightColW - 0.05, rowY, { align: 'right' });
-          }
-        });
-        // Net top 3 — name, score, and payout amount
-        fb.fNet.forEach((n: any, ni: number) => {
-          const rowY = y + 0.33 + (ni + 1) * 0.2;
-          const nm = pdf.getTextWidth(n.name || '') > flightColW - 1.5 ? pdf.splitTextToSize(n.name || '', flightColW - 1.5)[0] : (n.name || '');
-          pdf.text(`${ni + 1}. ${nm}`, margin + flightColW + 0.35, rowY);
-          const netPay = payoutLookup[n.player_id]?.net_payout || 0;
-          if (netPay > 0) {
-            pdf.text(String(n.net_total ?? '—'), margin + flightColW * 2 + 0.3 - 0.65, rowY, { align: 'right' });
-            pdf.setFont('helvetica', 'bold');
-            pdf.setTextColor(212, 160, 23);
-            pdf.text('$' + netPay.toFixed(2), margin + flightColW * 2 + 0.3 - 0.05, rowY, { align: 'right' });
-            pdf.setTextColor(0, 0, 0);
-          } else {
-            pdf.text(String(n.net_total ?? '—'), margin + flightColW * 2 + 0.3 - 0.05, rowY, { align: 'right' });
-          }
-        });
-        pdf.setTextColor(0, 0, 0);
-        y += flightBlockH;
-      });
-      y += 0.2;
-    }
-
     // ── Final Payouts table (mirrors on-screen PayoutTable) ──
-    // For multi-flight, the Per-Flight Results section already advanced y past
-    // the side games; only sync from colEndY when that section didn't run.
-    if (!(isMultiFlight && seriesRoundsCache && seriesRoundsCache.length > 0)) {
-      y = Math.max(colEndY[0], colEndY[1]) + 0.1;
-    }
+    y = Math.max(colEndY[0], colEndY[1]) + 0.1;
     {
       const SIDE_TYPES_PD = [
         { key: "gross_skins_payout", label: "Gross Skins" },
@@ -799,13 +1228,72 @@ Deno.serve(async (req) => {
         return p.total_payout != null ? p.total_payout : colsPd.reduce((sum, c) => sum + (p[c.key] || 0), 0);
       };
 
-      const allPayouts = (results.payouts || []).slice().sort((a: any, b: any) => grandTotalPd(b) - grandTotalPd(a));
+      // Team format: aggregate per-player payouts into per-team rows so the
+      // table lists ALL teams (including those with $0), not just the winners.
+      // Multi-day: also aggregate each day's per-player payouts by team so the
+      // per-day side-game columns show team-level totals.
+      // Las Vegas / Aggregate (and any team round with individual side games)
+      // keep one row per PLAYER — skins, KPs, and deuces are won individually,
+      // and each player's share of the team prize is already on their row.
+      const isAggRound = round.game_type === 'team_aggregate' || (round.team_mode === true && round.team_format === 'aggregate');
+      const individualSideGames = useVegas || isAggRound || round.skins_team_mode === false;
+      // Champion Purse — separate money paid on top of place payouts to each
+      // decided champion; folded into their row and total.
+      const purseByPlayer: Record<string, number> = {};
+      championRows.forEach((cr) => {
+        if (cr.purse > 0 && !cr.pursePending && cr.player_id) {
+          purseByPlayer[cr.player_id] = (purseByPlayer[cr.player_id] || 0) + cr.purse;
+        }
+      });
+      const basePayouts = (results.payouts || []).map((p: any) => purseByPlayer[p.player_id]
+        ? { ...p, champion_purse_payout: purseByPlayer[p.player_id], total_payout: (p.total_payout || 0) + purseByPlayer[p.player_id] }
+        : p);
+      let allPayouts: any[];
+      if (isTeamFormat && !individualSideGames && teamGrossResults.length > 0) {
+        const teamsById: Record<string, { team_id: string; team_name: string; memberIds: string[] }> = {};
+        const playerToTeam: Record<string, string> = {};
+        const registerTeam = (t: any) => {
+          if (!t || !t.team_id) return;
+          if (!teamsById[t.team_id]) teamsById[t.team_id] = { team_id: t.team_id, team_name: t.team_name || '—', memberIds: [] };
+          (t.members || []).forEach((m: any) => {
+            const pid = typeof m === 'string' ? m : m.player_id;
+            if (pid) { playerToTeam[pid] = t.team_id; teamsById[t.team_id].memberIds.push(pid); }
+          });
+        };
+        teamVegasResults.forEach(registerTeam);
+        teamGrossResults.forEach(registerTeam);
+        teamNetResults.forEach(registerTeam);
+        const SIDE_KEYS_TEAM = ['gross_payout','net_payout','field_gross_payout','field_net_payout','champion_purse_payout','kp_payout','gross_skins_payout','net_skins_payout','deuce_payout'];
+        const aggregateByTeam = (perPlayerPayouts: any[]) => {
+          const byTeam: Record<string, any> = {};
+          Object.keys(teamsById).forEach(tid => {
+            byTeam[tid] = { player_id: tid, name: teamsById[tid].team_name, gross_payout: 0, net_payout: 0, field_gross_payout: 0, field_net_payout: 0, kp_payout: 0, gross_skins_payout: 0, net_skins_payout: 0, deuce_payout: 0, total_payout: 0 };
+          });
+          (perPlayerPayouts || []).forEach((p: any) => {
+            const tid = playerToTeam[p.player_id];
+            if (!tid || !byTeam[tid]) return;
+            const t = byTeam[tid];
+            SIDE_KEYS_TEAM.forEach(k => { t[k] += p[k] || 0; });
+          });
+          Object.values(byTeam).forEach((t: any) => {
+            t.total_payout = SIDE_KEYS_TEAM.reduce((s: number, k: string) => s + (t[k] || 0), 0);
+          });
+          return Object.values(byTeam);
+        };
+        if (isMultiDayPd) {
+          dayMetaPd = dayMetaPd.map((d: any) => ({ ...d, dayPayouts: aggregateByTeam(d.dayPayouts) }));
+        }
+        allPayouts = aggregateByTeam(basePayouts).sort((a: any, b: any) => grandTotalPd(b) - grandTotalPd(a));
+      } else {
+        allPayouts = basePayouts.slice().sort((a: any, b: any) => grandTotalPd(b) - grandTotalPd(a));
+      }
 
       if (isMultiDayPd) {
         mainColsPd = holdMainPayouts ? [] : [
           { key: "gross_payout", label: "Gross" },
           { key: "net_payout", label: "Net" },
-        ];
+          { key: "champion_purse_payout", label: "Champion Purse" },
+        ].filter(c => allPayouts.some((p: any) => (p[c.key] || 0) > 0) || c.key !== "champion_purse_payout");
         for (const d of dayMetaPd) {
           for (const t of SIDE_TYPES_PD) {
             const hasValue = allPayouts.some((p: any) => {
@@ -817,10 +1305,11 @@ Deno.serve(async (req) => {
         }
       } else {
         const allCols = [
-          { key: "gross_payout", label: "Gross" },
+          { key: "gross_payout", label: useVegas ? "Las Vegas" : "Gross" },
           { key: "net_payout", label: "Net" },
           { key: "field_gross_payout", label: "Field Gross" },
           { key: "field_net_payout", label: "Field Net" },
+          { key: "champion_purse_payout", label: "Champion Purse" },
           { key: "kp_payout", label: "KP" },
           { key: "gross_skins_payout", label: "Gross Skins" },
           { key: "net_skins_payout", label: "Net Skins" },

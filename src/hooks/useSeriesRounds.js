@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
+import { hydrateRoundsScores } from "@/lib/roundScores";
 
 /**
  * Shared, cached fetch of every round in a multi-day series (parent + all
@@ -44,9 +45,9 @@ export function useSeriesRounds(round) {
         const all = [parent, ...children].filter(Boolean);
         const seen = new Set();
         const unique = all.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
-        if (unique.length > 1) return unique;
+        if (unique.length > 1) return hydrateRoundsScores(unique);
       } catch (e2) { /* final fallback below */ }
-      return [round];
+      return hydrateRoundsScores([round]);
     },
     enabled: !!(round?.is_multi_day || round?.is_multi_flight) && !!anchorId,
     // staleTime: 0 so the series data is always refetched on mount — when a new

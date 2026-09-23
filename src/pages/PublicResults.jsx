@@ -13,6 +13,8 @@ import GrossNetResults from "@/components/results/GrossNetResults";
 import TeamStandings from "@/components/results/TeamStandings";
 import SkinsTable from "@/components/results/SkinsTable";
 import PayoutTable from "@/components/results/PayoutTable";
+import ChampionStatement from "@/components/results/ChampionStatement";
+import { getChampionConfig, buildChampionRows, championPurseMap } from "@/lib/flightChampions";
 
 export default function PublicResults() {
   const navigate = useNavigate();
@@ -91,6 +93,14 @@ export default function PublicResults() {
   const showGrossSkins = round.gross_skins_enabled || (results.gross_skins_allocated_pot > 0) || (results.gross_skins_separate_pot > 0) || (results.gross_skins?.length > 0);
   const showNetSkins = round.net_skins_enabled || (results.net_skins_allocated_pot > 0) || (results.net_skins_separate_pot > 0) || (results.net_skins?.length > 0);
 
+  const championRows = holdMainPayouts
+    ? []
+    : buildChampionRows(round, [{
+        flightNumber: round.flight_number || 1,
+        label: round.flight_name || round.event_name || 'Champion',
+        results,
+      }]);
+
   return (
     <div className="max-w-3xl mx-auto space-y-6 p-4 pb-20">
       {/* Header */}
@@ -105,6 +115,8 @@ export default function PublicResults() {
             Share
           </Button>
         </div>
+
+        <ChampionStatement rows={championRows} />
 
         {/* Pot breakdown */}
         {results.total_pot > 0 && (
@@ -250,7 +262,7 @@ export default function PublicResults() {
 
         {/* Payout Table */}
         <div className="mt-3">
-          <PayoutTable results={results} holdMainPayouts={holdMainPayouts} />
+          <PayoutTable results={results} holdMainPayouts={holdMainPayouts} championPurses={championPurseMap(championRows)} />
         </div>
       </motion.div>
     </div>

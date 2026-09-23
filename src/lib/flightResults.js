@@ -293,6 +293,11 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
   // payout dollar amounts are correct in the payouts array.
   const currentDayGrossSkins = finalResults.gross_skins || [];
   const currentDayNetSkins = finalResults.net_skins || [];
+  // Deuces settle per-day like skins, so the final day's own deuce winners must
+  // ride along on the combined results — otherwise that day's deuce card reads
+  // an empty list and wrongly reports "no deuces this round".
+  const currentDayDeuces = finalResults.deuces || [];
+  const currentDayDeucePerEntry = finalResults.deuce_per_entry_amount || 0;
 
   // Hybrid tournament-wide KP: pool ALL days' and flights' KP pots into one
   // purse and divide equally among EVERY KP winner entry (each day's winner
@@ -368,6 +373,9 @@ export function computeHybridSeriesResults(finalRound, finalResults, siblingPair
     player_flight_map: playerFlightMap,
     gross_skins: currentDayGrossSkins,
     net_skins: currentDayNetSkins,
+    deuces: currentDayDeuces,
+    deuce_per_entry_amount: currentDayDeucePerEntry,
+    flight_own_deuce_pot: finalResults.deuce_pot || 0,
   };
 }
 

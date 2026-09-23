@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Trophy, Award, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { computeStandingsDisplay, rankLabel } from "@/lib/standingsRanks";
+import { orderChampionsFirst } from "@/lib/championOrder";
 
 const findPayoutForPlayer = (playerId, payouts) =>
   payouts?.find(p => p.player_id === playerId) ?? null;
@@ -10,7 +11,7 @@ const findPayoutForPlayer = (playerId, payouts) =>
 export default function GrossNetResults({ results, round, players, onEditScore, editMode, holdMainPayouts, isMultiFlight, forceStacked }) {
   const payouts = results.payouts || [];
   const playersList = players || round?.players || [];
-  const grossResults = results.gross_results || [];
+  const grossResults = orderChampionsFirst(results.gross_results || [], round);
   const netResults = results.net_results || [];
   const isStableford = !!results.stableford;
   const { grossDisplay, netDisplay } = computeStandingsDisplay(grossResults, netResults, payouts, isStableford);

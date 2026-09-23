@@ -623,14 +623,14 @@ export default function Step5BuyIn({ form, updateForm, nextStep, prevStep, isAdd
             // Child flight whose parent already has added money: the pot is
             // set on the open flight and splits across flights, so this flight
             // can't add its own. Show a note instead of the add button.
-            if (isChild && isFlight && parentHasAddedMoney && !hasAddedMoney) {
-              return (
+            if (isChild && !hasAddedMoney) {
+              return parentHasAddedMoney ? (
                 <div className="rounded-xl border-2 border-dashed border-muted bg-muted/30 p-3 text-center">
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    <span className="font-semibold text-foreground">Added money already set</span> on the open flight — it splits across all flights automatically.
+                    <span className="font-semibold text-foreground">Added money already set</span> on the first {isFlight ? 'flight' : 'day'} — it applies to the whole tournament automatically.
                   </p>
                 </div>
-              );
+              ) : null;
             }
             if (!showAddedMoney) {
               return (

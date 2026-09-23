@@ -11,13 +11,13 @@ import { shareOrDownloadPdf } from "@/lib/fileShare";
 
 const STEPS = { SELECT: "select", PREVIEW: "preview" };
 
-export default function SendResultsModal({ isOpen, onClose, round, results, dayLabel, flightData }) {
+export default function SendResultsModal({ isOpen, onClose, round, results, dayLabel, flightData, champions }) {
   const [step, setStep] = useState(STEPS.SELECT);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
 
   const messageText = useMemo(() => {
-    return formatResultsText(round, results, dayLabel, flightData);
+    return formatResultsText(round, results, dayLabel, { ...(flightData || {}), champions });
   }, [round, results, dayLabel, flightData]);
 
   // Load player contact info from the master player list
@@ -84,6 +84,7 @@ export default function SendResultsModal({ isOpen, onClose, round, results, dayL
   const selectedEmails = useMemo(() => selectedPlayers.map(p => p.email).filter(Boolean), [selectedPlayers]);
 
   const [smsLinksReady, setSmsLinksReady] = useState(false);
+  const [smsPreparing, setSmsPreparing] = useState(false);
   const [sentIds, setSentIds] = useState(new Set());
   const [emailSending, setEmailSending] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -113,8 +114,16 @@ export default function SendResultsModal({ isOpen, onClose, round, results, dayL
       toast.error("No phone numbers selected");
       return;
     }
-    await base44.entities.Round.update(round.id, { is_public: true });
-    setSmsLinksReady(true);
+    setSmsPreparing(true);
+    try {
+      await base44.entities.Round.update(round.id, { is_public: true });
+    } catch {
+      // Making the round public is a convenience for the shared link — never
+      // let it block the host from texting the results.
+    } finally {
+      setSmsPreparing(false);
+      setSmsLinksReady(true);
+    }
   };
 
   const handleEmail = async (sendToMe = false) => {
@@ -289,10 +298,10 @@ export default function SendResultsModal({ isOpen, onClose, round, results, dayL
               <Button
                 className="w-full gap-2"
                 onClick={handleSendViaSMS}
-                disabled={selectedPhones.length === 0}
+                disabled={selectedPhones.length === 0 || smsPreparing}
               >
-                <MessageSquare className="w-4 h-4" />
-                Send via SMS ({selectedPhones.length})
+                {smsPreparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+                {smsPreparing ? "Preparing…" : `Send via SMS (${selectedPhones.length})`}
               </Button>
             )}
 

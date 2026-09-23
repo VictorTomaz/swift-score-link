@@ -1299,7 +1299,9 @@ export function buildFinalPayouts(players, { grossPayouts, netPayouts, kpPayouts
   // Floor each player's total
   const floored = rawTotals.map(v => Math.floor(v));
   const floorSum = floored.reduce((a, b) => a + b, 0);
-  const totalRaw = rawTotals.reduce((a, b) => a + b, 0);
+  // Snap to cents before flooring — summing many fractional payouts can land a
+  // hair under a whole dollar (e.g. 219.99999999), which would strand $1.
+  const totalRaw = Math.round(rawTotals.reduce((a, b) => a + b, 0) * 100) / 100;
   const extraDollars = Math.floor(totalRaw) - floorSum;
   
   // Distribute extra dollars to LOWEST earners first (they get rounded UP)

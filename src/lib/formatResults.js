@@ -1,5 +1,7 @@
 import { computeStandingsDisplay, computeTeamStandingsDisplay, rankLabel } from "@/lib/standingsRanks";
 import { formatFlightSections, buildPlayerFlightLabels } from "@/lib/formatFlightResults";
+import { orderChampionsFirst } from "@/lib/championOrder";
+import { championPurseMap } from "@/lib/flightChampions";
 import { formatSideGamesSections, sideGameWinnerLabel, shareSuffix } from "@/lib/formatSideGames";
 import { buildTeamNameByPlayer } from "@/lib/teamPlayerLookup";
 
@@ -72,6 +74,34 @@ export function formatResultsText(round, results, dayLabel = null, flightData = 
   if (dateStr) lines.push(`📅 ${dateStr}`);
   lines.push("");
 
+  // Champion statement — one line per flight (opt-in per tournament).
+  const champions = flightData.champions || [];
+  if (champions.length > 0) {
+    lines.push(champions.length > 1
+      ? "🏆 CONGRATULATIONS TO OUR CHAMPIONS!"
+      : "🏆 CONGRATULATIONS TO OUR CHAMPION!");
+    const multiFlightChamps = new Set(champions.map(c => c.flightNumber)).size > 1;
+    champions.forEach(c => {
+      const tag = [multiFlightChamps ? c.label : null, c.divisionLabel].filter(Boolean).join(" · ");
+      const prefix = tag ? `${tag}: ` : "";
+      const s = c.score ?? c.gross_total;
+      const score = s != null ? ` — ${s}` : "";
+      const playoff = c.via_playoff ? " (won playoff)" : "";
+      lines.push(`   ${prefix}${c.name}${score}${playoff}`);
+      if (c.purse > 0) {
+        lines.push(`      Champion Purse: $${Math.round(c.purse)}${c.purse_pending ? " (awaiting playoff)" : ""}`);
+      }
+    });
+    const purseTotal = champions.reduce((s, c) => s + (c.purse || 0), 0);
+    if (purseTotal > 0) {
+      lines.push(`   Champion Purse total $${Math.round(purseTotal)} — paid on top of the place payouts.`);
+    }
+    lines.push(champions.length > 1
+      ? "   Well played — congratulations to each flight champion!"
+      : "   Well played — congratulations on the win!");
+    lines.push("");
+  }
+
   // Pot breakdown (mirrors the grid cards on Results page)
   if (results.total_pot > 0) {
     lines.push(`💰 Total Pot: $${Math.round(results.total_pot)}`);
@@ -87,13 +117,23 @@ export function formatResultsText(round, results, dayLabel = null, flightData = 
 
   // Team vs individual standings — multi-day non-final day holds the main purse
   const isTeamEvent = !!(round.game_type && round.game_type !== "individual");
-  const holdMain = !!round.is_multi_day && !results.is_series_cumulative;
+  // The Results page decides whether the main purse is held (hybrid / multi-day
+  // rules); use its answer when provided so text and screen always agree.
+  const holdMain = typeof flightData.holdMainPayouts === "boolean"
+    ? flightData.holdMainPayouts
+    : (!!round.is_multi_day && !results.is_series_cumulative);
 
-  const flightSections = formatFlightSections(results, isStableford, flightData, round);
+  const flightSections = formatFlightSections(results, isStableford, flightData, round, holdMain);
   const hasFlights = flightSections.length > 0;
   const flightLabels = hasFlights ? buildPlayerFlightLabels(results, flightData) : {};
 
   if (hasFlights) {
+    if (holdMain) {
+      lines.push("🏆 MAIN PURSE HELD");
+      lines.push("   Gross & net payouts are held until the final day.");
+      lines.push("   Side games (skins, KPs, deuces) settle today.");
+      lines.push("");
+    }
     lines.push(...flightSections);
   } else if (holdMain) {
     lines.push("🏆 MAIN STANDINGS HELD");
@@ -147,7 +187,7 @@ export function formatResultsText(round, results, dayLabel = null, flightData = 
     }
   } else {
     // Gross standings
-    const grossStandings = results.gross_results || [];
+    const grossStandings = orderChampionsFirst(results.gross_results || [], round);
     if (grossStandings.length > 0) {
       lines.push(isStableford ? "🏆 GROSS POINTS" : "🏆 GROSS STANDINGS");
       grossStandings.forEach((p) => {
@@ -292,10 +332,19 @@ export function formatResultsText(round, results, dayLabel = null, flightData = 
     lines.push("");
   }
 
-  // Final payouts summary
-  const payouts = (results.payouts || []).filter(p => p.total_payout > 0.01);
+  // Final payouts summary. While the main purse is held, only side-game
+  // winnings are paid today — strip gross/net/field amounts from each total.
+  const pursePaid = holdMain ? {} : championPurseMap(flightData.champions);
+  const payouts = (results.payouts || [])
+    .map(p => pursePaid[p.player_id]
+      ? { ...p, total_payout: (p.total_payout || 0) + pursePaid[p.player_id] }
+      : p)
+    .map(p => holdMain
+      ? { ...p, total_payout: (p.total_payout || 0) - (p.gross_payout || 0) - (p.net_payout || 0) - (p.field_gross_payout || 0) - (p.field_net_payout || 0) }
+      : p)
+    .filter(p => p.total_payout > 0.01);
   if (payouts.length > 0) {
-    lines.push(hasFlights ? "💵 TOTAL PAYOUTS (ALL FLIGHTS)" : "💵 FINAL PAYOUTS");
+    lines.push(holdMain ? "💵 SIDE GAME PAYOUTS (TODAY)" : hasFlights ? "💵 TOTAL PAYOUTS (ALL FLIGHTS)" : "💵 FINAL PAYOUTS");
     const sortedPayouts = [...payouts].sort((a, b) => b.total_payout - a.total_payout);
 
     // Team events: group each payout under its team so the message reads as

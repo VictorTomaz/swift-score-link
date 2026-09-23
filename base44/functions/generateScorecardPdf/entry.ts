@@ -9,9 +9,14 @@ const DEFAULT_666_SEGS = [
 const FMT_LABEL_666 = { chapman: 'Chapman', best_ball: 'Best Ball', scramble: 'Scramble', alternate_shot: 'Alt Shot' };
 
 const HCP_FORMULA_LABELS = {
+  none: 'No Handicap',
+  individual: 'Individual (Per-Player)',
   combined_avg: 'Combined Average',
+  avg_30: '70% of Combined Average',
   combined_85: '85% of Combined',
   usga_scramble: 'USGA Scramble',
+  split_60_40: '60/40 (60% Low / 40% High)',
+  split_35_15: '35/15 (35% Low / 15% High)',
   sum: 'Full Combined',
 };
 
@@ -20,14 +25,22 @@ function computeTeamHandicap(players, formula) {
     .filter((p) => p && p.course_handicap != null)
     .map((p) => Number(p.course_handicap))
     .filter((n) => !isNaN(n))
-    .sort((a, b) => a - b);
+    .sort((a, b) => a - b); // ascending: low → high
   if (handicaps.length === 0) return null;
   const sum = handicaps.reduce((a, b) => a + b, 0);
   const count = handicaps.length;
   switch (formula) {
+    case 'none':
+      return 0;
+    case 'individual':
+      // No team-level adjustment — each player's own course handicap applies per hole.
+      return null;
     case 'combined_avg': return Math.round(sum / count);
+    case 'avg_30': return Math.round((sum / count) * 0.70);
     case 'sum': return sum;
     case 'usga_scramble': {
+      // USGA scramble allowances applied low → high handicap:
+      // 2P: 35% / 15%  ·  3P: 30% / 20% / 10%  ·  4P: 25% / 20% / 15% / 10%
       let pct;
       if (count >= 4) pct = [0.25, 0.20, 0.15, 0.10];
       else if (count === 3) pct = [0.30, 0.20, 0.10];
@@ -35,6 +48,16 @@ function computeTeamHandicap(players, formula) {
       let total = 0;
       for (let i = 0; i < count && i < pct.length; i++) total += handicaps[i] * pct[i];
       return Math.round(total);
+    }
+    case 'split_60_40': {
+      // 60% low / 40% high — uses lowest and highest handicaps on the team
+      if (count === 1) return Math.round(handicaps[0] * 0.60);
+      return Math.round(handicaps[0] * 0.60 + handicaps[count - 1] * 0.40);
+    }
+    case 'split_35_15': {
+      // 35% low / 15% high — uses lowest and highest handicaps on the team
+      if (count === 1) return Math.round(handicaps[0] * 0.35);
+      return Math.round(handicaps[0] * 0.35 + handicaps[count - 1] * 0.15);
     }
     case 'combined_85':
     default: return Math.round(sum * 0.85);
@@ -117,9 +140,10 @@ Deno.serve(async (req) => {
 
     const cardWidth = colWidths.name + colWidths.init + 18 * colWidths.hole + colWidths.out + colWidths.in + colWidths.tot + colWidths.hcp + colWidths.net;
 
-    const isTeamMode = round.team_mode === true || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman'].includes(round.game_type);
+    const isTeamMode = round.team_mode === true || ['team_scramble', 'team_best_ball', 'team_6_6_6', 'team_chapman', 'team_las_vegas'].includes(round.game_type);
     const teamSize = isTeamMode ? (round.team_size || 2) : 0;
-    const isScramble = isTeamMode && round.team_format === 'scramble';
+    const isVegasRound = round.game_type === 'team_las_vegas' || round.team_format === 'las_vegas';
+    const isScramble = isTeamMode && !isVegasRound && round.team_format === 'scramble';
     const is666 = isTeamMode && round.game_type === 'team_6_6_6';
     const isChapman = isTeamMode && round.game_type === 'team_chapman';
 
@@ -282,6 +306,25 @@ Deno.serve(async (req) => {
   }
 });
 
+// One handicap allowance for the whole Vegas card — mirrors netHandicapScale()
+// in src/lib/vegasFormat.js so the printed dots match the app and the engine.
+function netHandicapScale(round) {
+  const isVegas = round?.game_type === 'team_las_vegas'
+    || (round?.team_mode === true && round?.team_format === 'las_vegas');
+  if (!isVegas) return 1;
+  const custom = round?.vegas_hcp_percent;
+  if (custom !== null && custom !== undefined && custom !== '' && !isNaN(Number(custom))) {
+    return Number(custom) / 100;
+  }
+  const byFormula = { combined_85: 0.85, avg_30: 0.7, none: 0 };
+  return byFormula[round?.hcp_formula] != null ? byFormula[round?.hcp_formula] : 1;
+}
+
+function scaleHandicap(hcpVal, scale) {
+  if (scale === 1 || hcpVal == null) return hcpVal;
+  return hcpVal < 0 ? -Math.round(Math.abs(hcpVal) * scale) : Math.round(hcpVal * scale);
+}
+
 function holeStrokes(courseHandicap, hcpIdx) {
   const ch = Number(courseHandicap);
   if (ch == null || isNaN(ch)) return 0;
@@ -304,9 +347,12 @@ function holeStrokes(courseHandicap, hcpIdx) {
 async function drawScorecard(pdf, round, players, startX, startY, cardWidth, cardHeight, colWidths, rowHeights, logoBytes, pageWidth, headerText, par, hcpIndexes, paddedCount) {
   const isTeamMode = round.team_mode === true;
   const teamSize = isTeamMode ? (round.team_size || 2) : 0;
-  const isScramble = isTeamMode && round.team_format === 'scramble';
+  // Vegas always needs individual player rows, never the single scramble row.
+  const isVegas = round.game_type === 'team_las_vegas' || round.team_format === 'las_vegas';
+  const isScramble = isTeamMode && !isVegas && round.team_format === 'scramble';
   const is666 = isTeamMode && round.game_type === 'team_6_6_6';
   const isChapman = isTeamMode && round.game_type === 'team_chapman';
+  const hcpScale = netHandicapScale(round);
 
   // Sub-group players by tee_group when in team mode (multiple teams per tee time)
   let subTeams;
@@ -513,7 +559,7 @@ async function drawScorecard(pdf, round, players, startX, startY, cardWidth, car
     const teamPlayers = subTeams[teamIdx];
     const displayPlayers = teamPlayers.length > 0 ? teamPlayers : [null];
     const teamHcpVal = computeTeamHandicap(displayPlayers.filter(p => p), round.hcp_formula);
-    const teamHcpStr = teamHcpVal != null ? String(teamHcpVal) : '';
+    const teamHcpStr = teamHcpVal != null ? (teamHcpVal < 0 ? `+${Math.abs(teamHcpVal)}` : String(teamHcpVal)) : '';
 
     // Best ball calculation for this team
     const grossBestBall = [];
@@ -526,7 +572,7 @@ async function drawScorecard(pdf, round, players, startX, startY, cardWidth, car
         const gross = Number((player.scores || [])[hole]);
         if (gross && gross > 0) {
           grossScores.push(gross);
-          const strokes = holeStrokes(player.course_handicap || 0, hcpIndexes[hole] || 0);
+          const strokes = holeStrokes(scaleHandicap(player.course_handicap || 0, hcpScale), hcpIndexes[hole] || 0);
           netScores.push(gross - strokes);
         }
       }
@@ -550,7 +596,8 @@ async function drawScorecard(pdf, round, players, startX, startY, cardWidth, car
       displayPlayers.forEach((player) => {
         const playerName = player ? (player.name || '') : '';
         const ch = player?.course_handicap;
-        const hcpDisplay = ch != null ? (ch < 0 ? `+${Math.abs(ch)}` : String(ch)) : '';
+        const scaledCh = ch != null ? scaleHandicap(Number(ch), hcpScale) : null;
+        const hcpDisplay = scaledCh != null ? (scaledCh < 0 ? `+${Math.abs(scaledCh)}` : String(scaledCh)) : '';
         const scores = player?.scores || [];
         const totalScore = scores.filter(s => s != null && s !== '').reduce((sum, s) => sum + Number(s), 0);
         const initials = playerName ? playerName.trim().split(/\s+/).map(n => n[0]).join('').toUpperCase().substring(0, 2) : '';
@@ -607,8 +654,8 @@ async function drawScorecard(pdf, round, players, startX, startY, cardWidth, car
             // strokes received, red for plus-handicap strokes given back).
             if (player && cell.score !== undefined) {
               const ch = player.course_handicap;
-              const hcpVal = ch != null ? Number(ch) : (player.is_plus_handicap ? -Math.abs(player.handicap || 0) : Math.abs(player.handicap || 0));
-              const strokes = holeStrokes(hcpVal, hcpIndexes[cell.score] || 0);
+              const rawHcp = ch != null ? Number(ch) : (player.is_plus_handicap ? -Math.abs(player.handicap || 0) : Math.abs(player.handicap || 0));
+              const strokes = holeStrokes(scaleHandicap(rawHcp, hcpScale), hcpIndexes[cell.score] || 0);
               if (strokes !== 0) {
                 const isPlus = strokes < 0;
                 const count = Math.abs(strokes);

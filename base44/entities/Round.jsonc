@@ -1,6 +1,6 @@
 {
-  "name": "Round",
   "type": "object",
+  "name": "Round",
   "properties": {
     "event_name": {
       "type": "string",
@@ -16,8 +16,8 @@
     },
     "date": {
       "type": "string",
-      "format": "date",
-      "description": "Date of the round"
+      "description": "Date of the round",
+      "format": "date"
     },
     "tee_set": {
       "type": "string",
@@ -25,12 +25,12 @@
     },
     "round_gender": {
       "type": "string",
+      "description": "Default tee gender for the round",
       "enum": [
         "men's",
         "ladies'"
       ],
-      "default": "men's",
-      "description": "Default tee gender for the round"
+      "default": "men's"
     },
     "slope": {
       "type": "number",
@@ -86,17 +86,17 @@
     },
     "handicap_adjustment_mode": {
       "type": "boolean",
-      "default": true,
-      "description": "If true, handicap index is converted to course handicap using slope/rating. If false, handicap is used as-is."
+      "description": "If true, handicap index is converted to course handicap using slope/rating. If false, handicap is used as-is.",
+      "default": true
     },
     "game_mode": {
       "type": "string",
+      "description": "Game mode",
       "enum": [
         "SWIFT_SCORE_11",
         "CUSTOM",
         "OFF"
-      ],
-      "description": "Game mode"
+      ]
     },
     "buy_in": {
       "type": "number",
@@ -104,8 +104,8 @@
     },
     "added_money": {
       "type": "number",
-      "default": 0,
-      "description": "Lump sum of added money (sponsorship, added purse, etc.) folded into the main gross/net pot alongside player buy-ins. For multi-flight tournaments, splits across flights proportionally by player count."
+      "description": "Lump sum of added money (sponsorship, added purse, etc.) folded into the main gross/net pot alongside player buy-ins. For multi-flight tournaments, splits across flights proportionally by player count.",
+      "default": 0
     },
     "added_money_label": {
       "type": "string",
@@ -113,8 +113,8 @@
     },
     "is_multi_day": {
       "type": "boolean",
-      "default": false,
-      "description": "If true, this round is part of a multi-day or multi-flight tournament series. The buy-in represents the total series entry fee (held until final round), while side games (skins, KPs, deuces) are settled round-by-round."
+      "description": "If true, this round is part of a multi-day or multi-flight tournament series. The buy-in represents the total series entry fee (held until final round), while side games (skins, KPs, deuces) are settled round-by-round.",
+      "default": false
     },
     "parent_round_id": {
       "type": "string",
@@ -122,32 +122,106 @@
     },
     "is_series_final": {
       "type": "boolean",
-      "default": false,
-      "description": "Series: explicitly marks this child round as the final day of the series. When true (and, for hybrid tournaments, is_final_flight is also true), the main gross/net purse is distributed from cumulative/field standings. When false (default), the main purse is held \u2014 side games (skins, KPs, deuces) settle round-by-round. If unset, final-day status is inferred from dates (latest-dated child)."
+      "description": "Series: explicitly marks this child round as the final day of the series. When true (and, for hybrid tournaments, is_final_flight is also true), the main gross/net purse is distributed from cumulative/field standings. When false (default), the main purse is held \u2014 side games (skins, KPs, deuces) settle round-by-round. If unset, final-day status is inferred from dates (latest-dated child).",
+      "default": false
     },
     "is_final_flight": {
       "type": "boolean",
-      "default": false,
-      "description": "Hybrid multi-day + multi-flight only: explicitly marks this round as belonging to the final flight of the series. The main purse pays out only when BOTH is_final_flight and is_series_final are true (final day of the final flight). If unset, auto-detected from flight_number (highest = final flight)."
+      "description": "Hybrid multi-day + multi-flight only: explicitly marks this round as belonging to the final flight of the series. The main purse pays out only when BOTH is_final_flight and is_series_final are true (final day of the final flight). If unset, auto-detected from flight_number (highest = final flight).",
+      "default": false
     },
     "series_type": {
       "type": "string",
+      "description": "Series type: 'multi_day' (same players across multiple days, scores summed for cumulative standings) or 'multi_flight' (different players per flight, field standings rank all players together for Low Gross/Net of the Field). Only meaningful when is_multi_day is true.",
       "enum": [
         "multi_day",
         "multi_flight"
       ],
-      "default": "multi_day",
-      "description": "Series type: 'multi_day' (same players across multiple days, scores summed for cumulative standings) or 'multi_flight' (different players per flight, field standings rank all players together for Low Gross/Net of the Field). Only meaningful when is_multi_day is true."
+      "default": "multi_day"
     },
     "is_multi_flight": {
       "type": "boolean",
-      "default": false,
-      "description": "If true, this tournament has different player pools per flight. Independent of the multi-day toggle \u2014 both can be enabled simultaneously for a multi-flight tournament that spans multiple days. When true, series_type is set to 'multi_flight' and is_multi_day is also true."
+      "description": "If true, this tournament has different player pools per flight. Independent of the multi-day toggle \u2014 both can be enabled simultaneously for a multi-flight tournament that spans multiple days. When true, series_type is set to 'multi_flight' and is_multi_day is also true.",
+      "default": false
     },
     "flight_number": {
       "type": "number",
-      "default": 1,
-      "description": "Hybrid multi-day + multi-flight: identifies which flight this round belongs to (1, 2, 3\u2026). Flight 1 / Day 1 is the parent (flight_number=1). When adding a new day to an existing flight, the flight_number matches that flight. When adding a new flight, flight_number is the next available. Only meaningful when both is_multi_day and is_multi_flight are true."
+      "description": "Hybrid multi-day + multi-flight: identifies which flight this round belongs to (1, 2, 3\u2026). Flight 1 / Day 1 is the parent (flight_number=1). When adding a new day to an existing flight, the flight_number matches that flight. When adding a new flight, flight_number is the next available. Only meaningful when both is_multi_day and is_multi_flight are true.",
+      "default": 1
+    },
+    "champion_enabled": {
+      "type": "boolean",
+      "description": "Per-tournament opt-in for champion / playoff declaration, configured in Tournament Logistics. When true, the host can name a playoff winner for a flight/division that ties for first, and a champion statement appears on the results page, results email, printed PDF and public results link.",
+      "default": false
+    },
+    "champion_payout_mode": {
+      "type": "string",
+      "description": "What declaring a playoff winner does to the money. 'title_only' (the standard for all new rounds) leaves payouts untouched and only records the champion label. 'winner_take_all' is LEGACY ONLY \u2014 kept so rounds recorded with it never change; it is never offered or set for new rounds.",
+      "enum": [
+        "title_only",
+        "winner_take_all"
+      ],
+      "default": "title_only"
+    },
+    "champion_divisions": {
+      "type": "array",
+      "description": "Which divisions crown a champion: 'gross', 'net', or both. Missing/empty means gross only (the original behaviour).",
+      "default": [
+        "gross"
+      ],
+      "items": {
+        "type": "string",
+        "enum": [
+          "gross",
+          "net"
+        ]
+      }
+    },
+    "champion_purse_per_flight": {
+      "type": "object",
+      "description": "Separate Champion Purse (club/sponsor money) per flight, keyed by flight number: { \"1\": { \"gross\": 200, \"net\": 100 } }. Paid to each division champion on top of the place payouts \u2014 never taken from the buy-in pot or any place payout.",
+      "default": {}
+    },
+    "flight_champions": {
+      "type": "array",
+      "description": "Declared playoff champions, one entry per flight per division. Written to every round in the series when declared so all result surfaces read the same answer. A champion is ignored (and not displayed) if a later score edit means that player no longer holds or shares the lead in that division.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "properties": {
+          "flight_number": {
+            "type": "number",
+            "description": "Which flight this champion won (1, 2, 3\u2026)"
+          },
+          "division": {
+            "type": "string",
+            "description": "Which division this champion won. Missing means gross (entries declared before net champions existed).",
+            "enum": [
+              "gross",
+              "net"
+            ],
+            "default": "gross"
+          },
+          "player_id": {
+            "type": "string",
+            "description": "The declared champion's player_id"
+          },
+          "player_name": {
+            "type": "string",
+            "description": "Champion's name at the time of declaration (display fallback)"
+          },
+          "via_playoff": {
+            "type": "boolean",
+            "description": "True when the champion was picked from a tie (a playoff decided it), false when they led outright",
+            "default": false
+          },
+          "declared_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the champion was declared"
+          }
+        }
+      }
     },
     "player_count": {
       "type": "number",
@@ -176,29 +250,29 @@
     },
     "team_mode": {
       "type": "boolean",
-      "default": false,
-      "description": "If true, scorecard renders team format with Gross and Net best-ball rows"
+      "description": "If true, scorecard renders team format with Gross and Net best-ball rows",
+      "default": false
     },
     "team_size": {
       "type": "number",
+      "description": "Number of players per team (2, 3, or 4) \u2014 used for team format scorecards. Las Vegas (1 gross / 2 net) requires 3 or 4.",
       "enum": [
         2,
         3,
         4
       ],
-      "default": 2,
-      "description": "Number of players per team (2, 3, or 4) \u2014 used for team format scorecards. Las Vegas (1 gross / 2 net) requires 3 or 4."
+      "default": 2
     },
     "team_format": {
       "type": "string",
+      "description": "Team scorecard format: best_ball (individual rows + Gross/Net best-ball), scramble (one team score per hole), aggregate (sum of all team scores per hole), or las_vegas (optimized 1 gross + 2 net per hole)",
       "enum": [
         "best_ball",
         "scramble",
         "aggregate",
         "las_vegas"
       ],
-      "default": "best_ball",
-      "description": "Team scorecard format: best_ball (individual rows + Gross/Net best-ball), scramble (one team score per hole), aggregate (sum of all team scores per hole), or las_vegas (optimized 1 gross + 2 net per hole)"
+      "default": "best_ball"
     },
     "segments_666": {
       "type": "array",
@@ -213,20 +287,21 @@
           },
           "format": {
             "type": "string",
+            "description": "Scoring format for this segment",
             "enum": [
               "chapman",
               "best_ball",
               "scramble",
               "alternate_shot",
               "aggregate"
-            ],
-            "description": "Scoring format for this segment"
+            ]
           }
         }
       }
     },
     "game_type": {
       "type": "string",
+      "description": "Game type: individual (standard play) or team-based formats (scramble, best ball, 6-6-6, chapman, aggregate, las vegas 1-gross/2-net)",
       "enum": [
         "individual",
         "team_scramble",
@@ -236,11 +311,11 @@
         "team_aggregate",
         "team_las_vegas"
       ],
-      "default": "individual",
-      "description": "Game type: individual (standard play) or team-based formats (scramble, best ball, 6-6-6, chapman, aggregate, las vegas 1-gross/2-net)"
+      "default": "individual"
     },
     "hcp_formula": {
       "type": "string",
+      "description": "Team handicap formula: none (no handicap), individual (per-player handicap, no team adjustment), combined_avg, avg_30 (70% of combined average), combined_85 (85% of combined), usga_scramble (25% low / 15% high), split_60_40 (60% low / 40% high), split_35_15 (35% low / 15% high), or sum (full combined)",
       "enum": [
         "none",
         "individual",
@@ -252,8 +327,7 @@
         "split_35_15",
         "sum"
       ],
-      "default": "combined_85",
-      "description": "Team handicap formula: none (no handicap), individual (per-player handicap, no team adjustment), combined_avg, avg_30 (70% of combined average), combined_85 (85% of combined), usga_scramble (25% low / 15% high), split_60_40 (60% low / 40% high), split_35_15 (35% low / 15% high), or sum (full combined)"
+      "default": "combined_85"
     },
     "vegas_hcp_percent": {
       "type": "number",
@@ -265,6 +339,12 @@
       "default": [],
       "items": {
         "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "format"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -276,15 +356,16 @@
           },
           "type": {
             "type": "string",
+            "description": "Whether standings/payouts are computed per-player or per-team",
             "enum": [
               "individual",
               "team"
             ],
-            "default": "individual",
-            "description": "Whether standings/payouts are computed per-player or per-team"
+            "default": "individual"
           },
           "format": {
             "type": "string",
+            "description": "Scoring format for this game",
             "enum": [
               "stroke_play",
               "best_ball",
@@ -295,30 +376,30 @@
               "stableford",
               "las_vegas"
             ],
-            "default": "stroke_play",
-            "description": "Scoring format for this game"
+            "default": "stroke_play"
           },
           "buy_in": {
             "type": "number",
-            "default": 0,
-            "description": "Per-player buy-in for this game's purse"
+            "description": "Per-player buy-in for this game's purse",
+            "default": 0
           },
           "is_main": {
             "type": "boolean",
-            "default": false,
-            "description": "True for the primary game (drives scorecard layout and team roster)"
+            "description": "True for the primary game (drives scorecard layout and team roster)",
+            "default": false
           },
           "team_size": {
             "type": "number",
+            "description": "Team size for this game (only if type='team')",
             "enum": [
               2,
               3,
               4
-            ],
-            "description": "Team size for this game (only if type='team')"
+            ]
           },
           "hcp_formula": {
             "type": "string",
+            "description": "Team handicap formula for this game (only if type='team')",
             "enum": [
               "none",
               "individual",
@@ -329,8 +410,7 @@
               "split_60_40",
               "split_35_15",
               "sum"
-            ],
-            "description": "Team handicap formula for this game (only if type='team')"
+            ]
           },
           "payout_percent": {
             "type": "number",
@@ -338,16 +418,10 @@
           },
           "places_paid": {
             "type": "number",
-            "default": 3,
-            "description": "Number of payout positions for this game"
+            "description": "Number of payout positions for this game",
+            "default": 3
           }
-        },
-        "required": [
-          "id",
-          "name",
-          "type",
-          "format"
-        ]
+        }
       }
     },
     "players": {
@@ -417,8 +491,8 @@
         },
         "extra_slots": {
           "type": "number",
-          "default": 0,
-          "description": "Additional empty tee time slots beyond the player count"
+          "description": "Additional empty tee time slots beyond the player count",
+          "default": 0
         }
       }
     },
@@ -507,8 +581,8 @@
     },
     "skins_team_mode": {
       "type": "boolean",
-      "default": true,
-      "description": "In team-format rounds, skins default to team-level (team best-ball per hole, winnings split among members). Set to false to keep skins individual per-player even in a team event."
+      "description": "In team-format rounds, skins default to team-level (team best-ball per hole, winnings split among members). Set to false to keep skins individual per-player even in a team event.",
+      "default": true
     },
     "deuce_pot_enabled": {
       "type": "boolean",
@@ -550,28 +624,28 @@
     },
     "field_prizes_enabled": {
       "type": "boolean",
-      "default": false,
-      "description": "Multi-flight only: if true, Low Gross of the Field and Low Net of the Field prizes are calculated as a percentage of their respective gross/net pots and awarded to the overall best players across all flights. Set on the parent (Flight 1) round."
+      "description": "Multi-flight only: if true, Low Gross of the Field and Low Net of the Field prizes are calculated as a percentage of their respective gross/net pots and awarded to the overall best players across all flights. Set on the parent (Flight 1) round.",
+      "default": false
     },
     "field_gross_percent": {
       "type": "number",
-      "default": 22,
-      "description": "Multi-flight only: percentage of the combined gross pot (across all flights) awarded to Low Gross of the Field. Only used when field_prizes_enabled is true."
+      "description": "Multi-flight only: percentage of the combined gross pot (across all flights) awarded to Low Gross of the Field. Only used when field_prizes_enabled is true.",
+      "default": 22
     },
     "field_net_percent": {
       "type": "number",
-      "default": 22,
-      "description": "Multi-flight only: percentage of the combined net pot (across all flights) awarded to Low Net of the Field. Only used when field_prizes_enabled is true."
+      "description": "Multi-flight only: percentage of the combined net pot (across all flights) awarded to Low Net of the Field. Only used when field_prizes_enabled is true.",
+      "default": 22
     },
     "field_gross_prize": {
       "type": "number",
-      "default": 0,
-      "description": "Legacy: fixed dollar amount for Low Gross of the Field. Superseded by field_gross_percent when field_prizes_enabled is true."
+      "description": "Legacy: fixed dollar amount for Low Gross of the Field. Superseded by field_gross_percent when field_prizes_enabled is true.",
+      "default": 0
     },
     "field_net_prize": {
       "type": "number",
-      "default": 0,
-      "description": "Legacy: fixed dollar amount for Low Net of the Field. Superseded by field_net_percent when field_prizes_enabled is true."
+      "description": "Legacy: fixed dollar amount for Low Net of the Field. Superseded by field_net_percent when field_prizes_enabled is true.",
+      "default": 0
     },
     "status": {
       "type": "string",
@@ -589,8 +663,8 @@
     },
     "is_public": {
       "type": "boolean",
-      "default": false,
-      "description": "If true, this round's results can be viewed via public link"
+      "description": "If true, this round's results can be viewed via public link",
+      "default": false
     },
     "locked_format": {
       "type": "object",

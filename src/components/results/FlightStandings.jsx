@@ -2,6 +2,7 @@ import React from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Trophy } from "lucide-react";
 import VegasStandings from "@/components/results/VegasStandings";
+import { orderChampionsFirst } from "@/lib/championOrder";
 
 /**
  * Displays a single flight's top gross/net finishers in a compact card.
@@ -79,7 +80,7 @@ export default function FlightStandings({ round, results, flightLabel, payouts, 
   }
 
   // Individual event: render player standings.
-  const grossResults = (results?.gross_results || []).filter(r => !r.disqualified);
+  const grossResults = orderChampionsFirst((results?.gross_results || []).filter(r => !r.disqualified), round);
   const netResults = (results?.net_results || []).filter(r => !r.disqualified);
 
   if (grossResults.length === 0 && netResults.length === 0) return null;

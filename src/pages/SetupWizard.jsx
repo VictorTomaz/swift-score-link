@@ -76,6 +76,8 @@ const defaultForm = {
   series_type: 'multi_day',
   added_money: 0,
   added_money_label: '',
+  champion_enabled: false,
+  champion_payout_mode: 'title_only',
 };
 
 export default function SetupWizard() {
@@ -181,6 +183,7 @@ export default function SetupWizard() {
         is_multi_flight: true,
         series_type: 'multi_flight',
         is_series_final: false,
+        champion_payout_mode: 'title_only',
         // flight_number is set async above (maxFn + 1) — starts at 2 for the
         // first child (parent is always flight 1).
         flight_number: 2,
@@ -235,6 +238,7 @@ export default function SetupWizard() {
         added_money: 0,
         added_money_label: '',
         is_series_final: false,
+        champion_payout_mode: 'title_only',
         date: nextDayStr,
         players: [],
         kp_winners: [],
@@ -250,8 +254,19 @@ export default function SetupWizard() {
         tee_sheet_config, is_public, kp_player_ids,
         gross_skins_player_ids, net_skins_player_ids, deuce_player_ids,
         ...createFields } = formFields;
-      base44.entities.Round.create({
+      // Adding a day makes the whole tournament multi-day. A multi-flight-only
+      // tournament becomes hybrid (multi-day + multi-flight) — otherwise each
+      // new day would be treated as an extra flight and paid out on its own.
+      const seriesParentId = addDaySourceRound.parent_round_id || addDaySourceRound.id;
+      const markSeriesMultiDay = async () => {
+        if (addDaySourceRound.is_multi_day) return;
+        const siblings = await base44.entities.Round.filter({ parent_round_id: seriesParentId });
+        const ids = [seriesParentId, ...siblings.map(r => r.id)];
+        await Promise.all(ids.map(rid => base44.entities.Round.update(rid, { is_multi_day: true })));
+      };
+      markSeriesMultiDay().then(() => base44.entities.Round.create({
         ...createFields,
+        is_multi_day: true,
         buy_in: Number(createFields.buy_in),
         player_count: Number(createFields.player_count),
         custom_gross_places: createFields.custom_gross_places ? Number(createFields.custom_gross_places) : 0,
@@ -265,7 +280,7 @@ export default function SetupWizard() {
         gross_skins_player_ids: addDaySourceRound.gross_skins_player_ids || [],
         net_skins_player_ids: addDaySourceRound.net_skins_player_ids || [],
         deuce_player_ids: addDaySourceRound.deuce_player_ids || [],
-      }).then(round => {
+      })).then(round => {
         sessionStorage.removeItem(SESSION_KEY);
         navigate(`/Scorecard?id=${round.id}`);
       }).catch(e => {

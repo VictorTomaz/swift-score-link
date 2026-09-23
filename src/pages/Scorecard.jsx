@@ -19,7 +19,7 @@ import ScoreSummary from "@/components/scorecard/ScoreSummary";
 import TeamScoreSummary from "@/components/scorecard/TeamScoreSummary";
 
 import { computeResults } from "@/lib/swiftScoreEngine";
-import { loadRoundScores, savePlayerScore, saveAllScores, mergeScoresIntoRound } from "@/lib/roundScores";
+import { loadRoundScores, savePlayerScore, saveAllScores, mergeScoresIntoRound, hydrateRoundScores } from "@/lib/roundScores";
 import PageDescription from "@/components/PageDescription";
 import InfoTooltip from "@/components/InfoTooltip";
 import ScorecardScanner from "@/components/scanner/ScorecardScanner";
@@ -138,7 +138,9 @@ export default function Scorecard() {
     queryKey: ["round", roundId],
     queryFn: async () => {
       const rounds = await base44.entities.Round.filter({ id: roundId });
-      return rounds[0];
+      // RoundScore is the single source of truth — completed-round views and
+      // print previews read players[].scores, so merge before returning.
+      return hydrateRoundScores(rounds[0]);
     },
     enabled: !!roundId,
     staleTime: 0,
