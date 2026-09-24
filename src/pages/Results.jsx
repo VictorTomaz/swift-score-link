@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { computeResults } from "@/lib/swiftScoreEngine";
 import { computeSeriesResults, computeTeamSeriesResults } from "@/lib/seriesResults";
 import { computeFlightSeriesResults, computeHybridSeriesResults } from "@/lib/flightResults";
@@ -42,8 +42,15 @@ import DeclareChampionCard from "@/components/results/DeclareChampionCard";
 import { applyChampionPayouts, getChampionConfig, buildChampionRows, championPurseMap } from "@/lib/flightChampions";
 
 export default function Results() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const roundId = urlParams.get("id");
+  // This app uses HashRouter (".../#/Results?id=..."), so the query string
+  // lives inside the hash — window.location.search is always empty here and
+  // roundId would never resolve (see the identical fix/comment in
+  // AuthCallback.jsx). useSearchParams() is React Router's own parser for the
+  // hash-based route, and it correctly picks up the id after the recovery
+  // effect below calls navigate() too, which is what actually clears the
+  // loading gate on a successful recovery.
+  const [searchParams] = useSearchParams();
+  const roundId = searchParams.get("id");
   const navigate = useNavigate();
 
   // Opened without an id (e.g. the iOS wrapper restored the path but dropped
