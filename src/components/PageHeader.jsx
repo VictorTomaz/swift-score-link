@@ -13,15 +13,24 @@ const pageNames = {
   "/PrintScorecards": "PRINT SCORECARDS",
   "/Help": "GAME SETUP",
   "/TermsAndPrivacy": "TERMS & PRIVACY",
+  "/TournamentHub": "TOURNAMENT HUB",
+  "/TournamentResults": "COMBINED RESULTS",
+  "/TournamentLogistics": "LOGISTICS",
+};
+
+const lookupName = (pathname) => {
+  const segment = "/" + ((pathname || "").split("/").filter(Boolean)[0] || "").toLowerCase();
+  const key = Object.keys(pageNames).find((name) => name.toLowerCase() === segment);
+  return key ? pageNames[key] : "PAGE";
 };
 
 export default function PageHeader() {
   const location = useLocation();
-  const [pageName, setPageName] = useState(pageNames[location.pathname] || "PAGE");
+  const [pageName, setPageName] = useState(lookupName(location.pathname));
 
   useEffect(() => {
     if (location.pathname === "/Scorecard") {
-      const urlParams = new URLSearchParams(window.location.search);
+      const urlParams = new URLSearchParams(location.search);
       const roundId = urlParams.get("id");
 
       if (!roundId) {
@@ -66,7 +75,7 @@ export default function PageHeader() {
         unsubscribe();
       };
     } else {
-      setPageName(pageNames[location.pathname] || "PAGE");
+      setPageName(lookupName(location.pathname));
     }
   }, [location.pathname, location.search]);
 

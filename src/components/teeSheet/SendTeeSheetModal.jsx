@@ -13,7 +13,7 @@ export default function SendTeeSheetModal({ isOpen, onClose, round, players, ass
     if (!round) return [];
     const current = { ...round, players: (players || []).map(p => ({ ...p, tee_time: assignments[p.player_id] || null })) };
     const anchor = round.parent_round_id || round.id;
-    return [...(allFlights ? (series.data || []).filter(r => r.id !== round.id && (r.parent_round_id || r.id) === anchor) : []), current];
+    return [...(allFlights ? (series.data || []).filter(r => r.id !== round.id && (r.parent_round_id || r.id) === anchor && (r.date || '') === (round.date || '')) : []), current];
   }, [round, players, assignments, allFlights, series.data]);
   if (!isOpen || !round) return null;
   if (allFlights && (series.isFetching || series.isError || !series.data?.length)) return (

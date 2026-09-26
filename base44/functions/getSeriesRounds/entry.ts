@@ -95,6 +95,15 @@ Deno.serve(async (req) => {
 
     allSeries = await Promise.all(allSeries.map(hydrate));
 
+    // Summary mode drops computed results while retaining the combined flag.
+    // Full results remain the default for existing callers.
+    if (body?.summary) {
+      allSeries = allSeries.map((r: any) => ({
+        ...r,
+        results: r.results ? { is_series_cumulative: !!r.results.is_series_cumulative } : r.results,
+      }));
+    }
+
     return Response.json({ rounds: allSeries });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

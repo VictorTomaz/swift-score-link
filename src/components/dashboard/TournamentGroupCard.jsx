@@ -137,7 +137,7 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit, onDele
             {/* Tournament Hub — one screen for every flight and day, with
                 scoring progress and a single Finalize action. */}
             <button
-              onClick={() => navigate(`/TournamentHub?id=${parentId}`)}
+              onClick={() => navigate(`/TournamentHub/${parentId}`, { state: { seriesRounds: group } })}
               className="w-full flex items-center justify-center gap-1.5 py-2 mt-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors"
             >
               <Layers className="w-3.5 h-3.5" />
@@ -150,7 +150,7 @@ export default function TournamentGroupCard({ group, isCompleted, onEdit, onDele
                 tournament is finalized on the final flight's final day. */}
             {isCompleted && (
               <button
-                onClick={() => navigate(`/TournamentResults?id=${parentId}`)}
+                onClick={() => navigate(`/TournamentResults?id=${parentId}`, { state: { seriesRounds: group } })}
                 className="w-full flex items-center justify-center gap-1.5 py-2 mt-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors"
               >
                 <Trophy className="w-3.5 h-3.5" />

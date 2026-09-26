@@ -10,8 +10,8 @@ export default function CombinedTeeSheet({ round, players, email, beforeExport, 
   const anchor = round.parent_round_id || round.id;
   const { data = [], isLoading, isFetching, isError, refetch } = useTournamentSeries(anchor);
   const rounds = useMemo(() => {
-    const series = data.filter(r => (r.parent_round_id || r.id) === anchor);
-    return [...series.filter(r => r.id !== round.id), { ...round, players }].sort((a,b) => (a.date || '').localeCompare(b.date || '') || (a.flight_number || 1) - (b.flight_number || 1));
+    const series = data.filter(r => (r.parent_round_id || r.id) === anchor && (r.date || '') === (round.date || ''));
+    return [...series.filter(r => r.id !== round.id), { ...round, players }].sort((a,b) => (a.flight_number || 1) - (b.flight_number || 1));
   }, [data, anchor, round, players]);
   const sheet = useMemo(() => buildCombinedSheet(rounds), [rounds]);
   if (isLoading) return <div className="flex justify-center gap-2 p-8 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Loading all flights…</div>;
@@ -24,7 +24,7 @@ export default function CombinedTeeSheet({ round, players, email, beforeExport, 
         <CombinedTeeSheetActions rounds={rounds} sheet={sheet} email={email} beforeExport={beforeExport} disabled={isFetching} />
       </div>
     </div>
-    <p className="text-xs text-muted-foreground">All flights, ordered by date and tee time. Switch to Per-flight to change assignments.{hasChanges ? ' Current-flight edits are included below and saved before printing.' : ''} Email Players selects recipients across all flights and opens a draft with their addresses in BCC.</p>
+    <p className="text-xs text-muted-foreground">All flights playing this date, ordered by tee time. Switch to Per-flight to change assignments.{hasChanges ? ' Current-flight edits are included below and saved before printing.' : ''} Email Players selects recipients across all flights and opens a draft with their addresses in BCC.</p>
     <CombinedTeeSheetRows sheet={sheet} />
   </section>;
 }

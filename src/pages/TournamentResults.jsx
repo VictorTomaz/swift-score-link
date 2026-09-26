@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChevronLeft, Trophy, Send, Calendar, RefreshCw, Loader2 } from "lucide-react";
 import { recomputeRoundResults, hasMissingSideGames, hasStaleFlightScores } from "@/lib/recomputeResults";
-import { hydrateRoundsScores } from "@/lib/roundScores";
+import { loadSeriesRounds } from "@/lib/loadSeriesRounds";
 import { format } from "date-fns";
 import GrossNetResults from "@/components/results/GrossNetResults";
 import TeamStandings from "@/components/results/TeamStandings";
@@ -36,6 +36,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 export default function TournamentResults() {
   const [searchParams] = useSearchParams();
   const roundId = searchParams.get("id");
+  const location = useLocation();
+  const seedRounds = location.state?.seriesRounds || [];
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sendModalOpen, setSendModalOpen] = useState(false);
@@ -56,32 +58,12 @@ export default function TournamentResults() {
   // the Combined Results page reliably finds the final round.
   const { data: seriesRounds = [], isLoading } = useQuery({
     queryKey: ["tournament-series", roundId],
-    queryFn: async () => {
-      let rounds = [];
-      try {
-        const res = await base44.functions.invoke("getSeriesRounds", { roundId });
-        const data = res?.data || res;
-        rounds = data?.rounds || [];
-      } catch (e) { /* fall back below */ }
-      // If the function returned only the parent (children fetch failed),
-      // fetch children directly via user context and merge.
-      if (rounds.length <= 1) {
-        try {
-          const children = await base44.entities.Round.filter({ parent_round_id: roundId }, '-created_date', 200);
-          let parent = rounds[0];
-          if (!parent) {
-            try { parent = await base44.entities.Round.get(roundId); }
-            catch (e) { parent = null; }
-          }
-          const all = [parent, ...children].filter(Boolean);
-          const seen = new Set();
-          rounds = all.filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
-          rounds = await hydrateRoundsScores(rounds);
-        } catch (e2) { /* keep whatever we have */ }
-      }
-      return rounds;
-    },
+    queryFn: () => loadSeriesRounds(roundId),
+    initialData: seedRounds.length ? seedRounds : undefined,
+    initialDataUpdatedAt: 0,
     enabled: !!roundId,
+    retry: 4,
+    retryDelay: (attempt) => Math.min(500 * (2 ** attempt), 4000),
   });
 
   // The round carrying the combined final results (is_series_cumulative).

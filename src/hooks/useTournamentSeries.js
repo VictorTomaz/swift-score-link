@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
-import { hydrateRoundsScores } from "@/lib/roundScores";
+import { loadSeriesRounds } from "@/lib/loadSeriesRounds";
 
 /**
  * Loads every round of a tournament series (parent + all flights/days) from a
@@ -8,34 +7,15 @@ import { hydrateRoundsScores } from "@/lib/roundScores";
  * service-role backend function, fall back to a user-context children filter
  * when it intermittently returns only the parent.
  */
-export function useTournamentSeries(anchorId) {
+export function useTournamentSeries(anchorId, seedRounds = []) {
   return useQuery({
-    queryKey: ["tournament-series", anchorId],
-    queryFn: async () => {
-      let rounds = [];
-      try {
-        const res = await base44.functions.invoke("getSeriesRounds", { roundId: anchorId });
-        const data = res?.data || res;
-        rounds = data?.rounds || [];
-      } catch (e) { /* fall back below */ }
-
-      if (rounds.length <= 1) {
-        try {
-          const children = await base44.entities.Round.filter({ parent_round_id: anchorId }, '-created_date', 200);
-          let parent = rounds[0];
-          if (!parent) {
-            try { parent = await base44.entities.Round.get(anchorId); }
-            catch (e) { parent = null; }
-          }
-          const seen = new Set();
-          rounds = [parent, ...children].filter(Boolean)
-            .filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)));
-          rounds = await hydrateRoundsScores(rounds);
-        } catch (e2) { /* keep whatever we have */ }
-      }
-      return rounds;
-    },
+    queryKey: ["tournament-hub-series", anchorId],
+    queryFn: () => loadSeriesRounds(anchorId, { summary: true }),
+    initialData: seedRounds.length ? seedRounds : undefined,
+    initialDataUpdatedAt: 0,
     enabled: !!anchorId,
+    retry: 4,
+    retryDelay: (attempt) => Math.min(500 * (2 ** attempt), 4000),
   });
 }
 

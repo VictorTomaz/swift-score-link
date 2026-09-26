@@ -16,7 +16,8 @@ import { TourProvider } from '@/context/TourContext';
 import NativeLogin from '@/pages/NativeLogin';
 import AuthCallback from '@/pages/AuthCallback';
 
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
+import { lazyWithReload } from '@/lib/lazyWithReload';
 import AppLayout from '@/components/layout/AppLayout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ScrollToTop from '@/components/ScrollToTop';
@@ -45,22 +46,22 @@ const useNativeAuthDeepLink = () => {
   }, []);
 };
 
-const Dashboard = lazy(() => import('@/pages/Dashboard'));
-const SetupWizard = lazy(() => import('@/pages/SetupWizard'));
-const Scorecard = lazy(() => import('@/pages/Scorecard'));
-const Results = lazy(() => import('@/pages/Results'));
-const PublicResults = lazy(() => import('@/pages/PublicResults'));
-const History = lazy(() => import('@/pages/History'));
-const CoursesManagement = lazy(() => import('@/pages/CoursesManagement'));
-const PlayersManagement = lazy(() => import('@/pages/PlayersManagement'));
-const Help = lazy(() => import('@/pages/Help'));
-const Faq = lazy(() => import('@/pages/Faq'));
-const TermsAndPrivacy = lazy(() => import('@/pages/TermsAndPrivacy'));
-const Settings = lazy(() => import('@/pages/Settings'));
-const TournamentLogistics = lazy(() => import('@/pages/TournamentLogistics'));
-const TournamentResults = lazy(() => import('@/pages/TournamentResults'));
-const TournamentHub = lazy(() => import('@/pages/TournamentHub'));
-const Paywall = lazy(() => import('@/pages/Paywall'));
+const Dashboard = lazyWithReload(() => import('@/pages/Dashboard'));
+const SetupWizard = lazyWithReload(() => import('@/pages/SetupWizard'));
+const Scorecard = lazyWithReload(() => import('@/pages/Scorecard'));
+const Results = lazyWithReload(() => import('@/pages/Results'));
+const PublicResults = lazyWithReload(() => import('@/pages/PublicResults'));
+const History = lazyWithReload(() => import('@/pages/History'));
+const CoursesManagement = lazyWithReload(() => import('@/pages/CoursesManagement'));
+const PlayersManagement = lazyWithReload(() => import('@/pages/PlayersManagement'));
+const Help = lazyWithReload(() => import('@/pages/Help'));
+const Faq = lazyWithReload(() => import('@/pages/Faq'));
+const TermsAndPrivacy = lazyWithReload(() => import('@/pages/TermsAndPrivacy'));
+const Settings = lazyWithReload(() => import('@/pages/Settings'));
+const TournamentLogistics = lazyWithReload(() => import('@/pages/TournamentLogistics'));
+const TournamentResults = lazyWithReload(() => import('@/pages/TournamentResults'));
+const TournamentHub = lazyWithReload(() => import('@/pages/TournamentHub'));
+const Paywall = lazyWithReload(() => import('@/pages/Paywall'));
 const AuthenticatedApp = () => {
   const { isLoadingAuth } = useAuth();
 
@@ -104,6 +105,7 @@ const AuthenticatedApp = () => {
             <Route path="/TournamentLogistics" element={<TournamentLogistics />} />
             <Route path="/TournamentResults" element={<TournamentResults />} />
             <Route path="/TournamentHub" element={<TournamentHub />} />
+            <Route path="/TournamentHub/:id" element={<TournamentHub />} />
           </Route>
         </Route>
 

@@ -34,6 +34,7 @@ export default function FinalizeTournamentCard({ seriesRounds, finalRound, ancho
       });
       await recomputeRoundResults(finalRound.id);
       await queryClient.invalidateQueries({ queryKey: ["tournament-series", anchorId] });
+      await queryClient.invalidateQueries({ queryKey: ["tournament-hub-series", anchorId] });
       queryClient.invalidateQueries({ queryKey: ["series-rounds"] });
       toast.success("Tournament finalized — combined results are ready");
     } catch (e) {

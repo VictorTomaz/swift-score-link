@@ -56,6 +56,7 @@ export default function DeclareChampionCard({ round, flights, seriesRounds }) {
       queryClient.invalidateQueries({ queryKey: ["round", round.id] });
       queryClient.invalidateQueries({ queryKey: ["series-rounds"] });
       queryClient.invalidateQueries({ queryKey: ["tournament-series"] });
+      queryClient.invalidateQueries({ queryKey: ["tournament-hub-series"] });
       toast.success(message);
     } catch (e) {
       toast.error("Failed to save champion: " + (e.message || "Unknown error"));

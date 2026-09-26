@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,15 +18,18 @@ import { useTournamentSeries, buildFlightStructure, findFinalRound } from "@/hoo
  * still runs through the existing engines.
  */
 export default function TournamentHub() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const anchorId = urlParams.get("id");
+  const { id: routeId } = useParams();
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const anchorId = routeId || searchParams.get("id");
   const navigate = useNavigate();
+  const seedRounds = location.state?.seriesRounds || [];
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
 
-  const { data: seriesRounds = [], isLoading } = useTournamentSeries(anchorId);
+  const { data: seriesRounds = [], isLoading } = useTournamentSeries(anchorId, seedRounds);
 
   const parentRound = useMemo(
     () => seriesRounds.find(r => !r.parent_round_id) || seriesRounds[0] || null,
@@ -90,7 +93,7 @@ export default function TournamentHub() {
         <Button
           variant="default"
           size="sm"
-          onClick={() => navigate(`/TournamentResults?id=${parentRound.id}`)}
+          onClick={() => navigate(`/TournamentResults?id=${parentRound.id}`, { state: { seriesRounds } })}
           className="gap-2"
         >
           <Trophy className="w-4 h-4" />
