@@ -12,8 +12,7 @@ import { useTournamentSeries, buildFlightStructure } from "@/hooks/useTournament
 export default function RoundContextBanner({ round }) {
   const navigate = useNavigate();
   const isSeries = !!(round?.is_multi_day || round?.is_multi_flight);
-  const anchorId = round?.parent_round_id || round?.id;
-  const { data: seriesRounds = [] } = useTournamentSeries(isSeries ? anchorId : null);
+  const { data: seriesRounds = [] } = useTournamentSeries(isSeries ? round?.id : null, round ? [round] : []);
 
   if (!isSeries) return null;
 
@@ -39,7 +38,7 @@ export default function RoundContextBanner({ round }) {
       </div>
       <button
         type="button"
-        onClick={() => navigate(`/TournamentHub?id=${anchorId}`)}
+        onClick={() => navigate(`/TournamentHub?id=${round.id}`, { state: { seriesRounds } })}
         className="flex items-center gap-1 text-xs font-semibold shrink-0 underline"
       >
         <ChevronLeft className="w-3.5 h-3.5" />

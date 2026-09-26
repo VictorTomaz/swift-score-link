@@ -14,6 +14,7 @@ import Step5BuyIn from '@/components/setup-wizard/Step5BuyIn';
 import Step6PlayerCount from '@/components/setup-wizard/Step6PlayerCount';
 import Step7ModeSpecificSetup from '@/components/setup-wizard/Step7ModeSpecificSetup';
 import PageDescription from '@/components/PageDescription';
+import { Button } from '@/components/ui/button';
 
 const STEPS = [
   { id: 1, title: 'Games' },
@@ -27,6 +28,21 @@ const STEPS = [
 ];
 
 const SESSION_KEY = 'setupWizard_draft';
+
+// A round ID is a built-in field. A direct get is more reliable than filtering
+// by id, especially for a flight reached from another round's results.
+async function loadSetupRound(id) {
+  let round = null;
+  for (let attempt = 0; attempt < 3 && !round; attempt++) {
+    try { round = await base44.entities.Round.get(id); } catch (e) { /* try again */ }
+  }
+  if (!round) {
+    const matches = await base44.entities.Round.filter({ id });
+    round = matches?.[0] || null;
+  }
+  if (!round) throw new Error('Round could not be loaded');
+  return round;
+}
 
 const defaultForm = {
   game_mode: null,
@@ -103,11 +119,10 @@ export default function SetupWizard() {
 
 
   // If editing an existing round, load its settings into the form
-  const { data: existingRound } = useQuery({
+  const { data: existingRound, isError: existingRoundError } = useQuery({
     queryKey: ['round', existingRoundId],
     queryFn: async () => {
-      const rounds = await base44.entities.Round.filter({ id: existingRoundId });
-      return rounds[0];
+      return loadSetupRound(existingRoundId);
     },
     enabled: !!existingRoundId,
     staleTime: 0,
@@ -128,11 +143,10 @@ export default function SetupWizard() {
   // Add Flight mode: load the parent round and pre-fill the form to create a
   // new child flight linked to that parent. The user reviews each step and
   // saves to create the new flight round.
-  const { data: parentRound } = useQuery({
+  const { data: parentRound, isError: parentRoundError } = useQuery({
     queryKey: ['round', addFlightParentId],
     queryFn: async () => {
-      const rounds = await base44.entities.Round.filter({ id: addFlightParentId });
-      return rounds[0];
+      return loadSetupRound(addFlightParentId);
     },
     enabled: !!addFlightParentId,
     staleTime: 0,
@@ -141,11 +155,10 @@ export default function SetupWizard() {
 
   // Add Day mode: load the source flight round to create a new day for the
   // SAME flight (same flight_number, buy_in=0 since entry fee was on Day 1).
-  const { data: addDaySourceRound } = useQuery({
+  const { data: addDaySourceRound, isError: addDaySourceRoundError } = useQuery({
     queryKey: ['round', addDayRoundId],
     queryFn: async () => {
-      const rounds = await base44.entities.Round.filter({ id: addDayRoundId });
-      return rounds[0];
+      return loadSetupRound(addDayRoundId);
     },
     enabled: !!addDayRoundId,
     staleTime: 0,
@@ -411,6 +424,14 @@ export default function SetupWizard() {
   // round's saved config has loaded into the form. Otherwise the wizard briefly shows the
   // default (individual) setup, and a quick save would overwrite the team config with defaults.
   if ((existingRoundId || addFlightParentId || addDayRoundId) && !formReady) {
+    if (existingRoundError || parentRoundError || addDaySourceRoundError) {
+      return (
+        <div className="min-h-screen w-full max-w-md mx-auto flex flex-col items-center justify-center gap-4 px-4 text-center">
+          <p className="text-muted-foreground">Round could not be loaded. Please try again.</p>
+          <Button onClick={() => navigate('/Dashboard')}>Dashboard</Button>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen w-full max-w-md mx-auto flex items-center justify-center px-4">
         <div className="flex flex-col items-center gap-3">

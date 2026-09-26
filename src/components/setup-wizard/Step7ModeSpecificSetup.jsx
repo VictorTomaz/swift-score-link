@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Loader2, ChevronDown } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import CustomModeSettings from '@/components/newround/CustomModeSettings';
 import InfoTooltip from '@/components/InfoTooltip';
 
@@ -34,18 +34,6 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
   const isFixed = form.game_mode === 'SWIFT_SCORE_11';
   const isCustom = form.game_mode === 'CUSTOM';
   const isMultiDay = !!form.is_multi_day;
-  const scrollRef = useRef(null);
-  const [showScrollHint, setShowScrollHint] = useState(false);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const check = () => setShowScrollHint(el.scrollHeight > el.clientHeight && el.scrollTop + el.clientHeight < el.scrollHeight - 10);
-    check();
-    el.addEventListener('scroll', check);
-    window.addEventListener('resize', check);
-    return () => { el.removeEventListener('scroll', check); window.removeEventListener('resize', check); };
-  }, []);
 
   // Auto-reset KP mode when both skins are enabled (KP can't be "part of skins" in this case)
   useEffect(() => {
@@ -74,7 +62,7 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
 
   return (
     <div className="relative">
-    <div ref={scrollRef} className="p-6 space-y-6 max-h-96 overflow-y-auto pb-10">
+    <div className="p-6 space-y-6 pb-10">
       <div>
         <h2 className="text-xl font-bold text-foreground">{isCustom ? 'Custom Mode Settings' : 'Side Games Setup'}</h2>
         <p className="text-sm text-muted-foreground mt-1">{isCustom ? 'Configure payout splits and places paid' : 'Configure optional side games'}</p>
@@ -450,12 +438,6 @@ export default function Step7ModeSpecificSetup({ form, updateForm, nextStep, pre
       </div>
     </div>
 
-    {showScrollHint && (
-      <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center py-1 pointer-events-none">
-        <ChevronDown className="w-4 h-4 text-muted-foreground animate-bounce" />
-        <span className="text-xs text-muted-foreground">Scroll for more</span>
-      </div>
-    )}
     </div>
   );
 }

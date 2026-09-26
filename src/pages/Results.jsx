@@ -1461,7 +1461,9 @@ export default function Results() {
             <Button
               variant="default"
               size="sm"
-              onClick={() => navigate(`/TournamentHub?id=${round.parent_round_id || round.id}`)}
+              onClick={() => navigate(`/TournamentHub?id=${round.id}`, {
+                state: { seriesRounds: seriesRoundsQuery.data?.length ? seriesRoundsQuery.data : [round] },
+              })}
               className="gap-2"
             >
               <Trophy className="w-4 h-4" />

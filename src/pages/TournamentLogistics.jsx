@@ -1319,12 +1319,13 @@ export default function TournamentLogistics() {
           Back to Locking in Roster and Entering Scores
         </Button>
         {selectedRound && (selectedRound.is_multi_day || selectedRound.is_multi_flight) && (() => {
-          const anchorId = selectedRound.parent_round_id || selectedRound.id;
           return (
             <Button
               variant="default"
               size="sm"
-              onClick={() => navigate(`/TournamentHub?id=${anchorId}`)}
+              onClick={() => navigate(`/TournamentHub?id=${selectedRound.id}`, {
+                state: { seriesRounds: [selectedRound] },
+              })}
               className="gap-1.5 ml-auto"
             >
               <Layers className="w-4 h-4" />

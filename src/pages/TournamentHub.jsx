@@ -93,7 +93,7 @@ export default function TournamentHub() {
         <Button
           variant="default"
           size="sm"
-          onClick={() => navigate(`/TournamentResults?id=${parentRound.id}`, { state: { seriesRounds } })}
+          onClick={() => navigate(`/TournamentResults?id=${anchorId}`, { state: { seriesRounds } })}
           className="gap-2"
         >
           <Trophy className="w-4 h-4" />
