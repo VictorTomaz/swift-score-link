@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,8 +34,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
  * accessible from one place regardless of which flight finished last.
  */
 export default function TournamentResults() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const roundId = urlParams.get("id");
+  const [searchParams] = useSearchParams();
+  const roundId = searchParams.get("id");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [sendModalOpen, setSendModalOpen] = useState(false);

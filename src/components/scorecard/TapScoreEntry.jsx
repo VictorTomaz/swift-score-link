@@ -23,7 +23,7 @@ export default function TapScoreEntry({ round, onUpdate, onScoresChange, switchM
     // sessionStorage is only a crash-recovery fallback for when DB has nothing yet.
     let sessionScores = null;
     try {
-      const roundId = new URLSearchParams(window.location.search).get("id");
+      const roundId = round?.id;
       const raw = roundId ? sessionStorage.getItem(`liveScores_${roundId}`) : null;
       sessionScores = raw ? JSON.parse(raw) : null;
     } catch {}
@@ -103,7 +103,7 @@ export default function TapScoreEntry({ round, onUpdate, onScoresChange, switchM
     onScoresChange?.(cleared);
     // Persist cleared scores to sessionStorage + localStorage
     try {
-      const roundId = new URLSearchParams(window.location.search).get("id");
+      const roundId = round?.id;
       if (roundId) {
         sessionStorage.setItem(`liveScores_${roundId}`, JSON.stringify(cleared));
         localStorage.setItem(`liveScores_backup_${roundId}`, JSON.stringify(cleared));
@@ -189,7 +189,7 @@ export default function TapScoreEntry({ round, onUpdate, onScoresChange, switchM
 
     // Write directly to sessionStorage on every tap (no React state update in parent = no re-render cascade)
     try {
-      const roundId = new URLSearchParams(window.location.search).get("id");
+      const roundId = round?.id;
       if (roundId) {
         sessionStorage.setItem(`liveScores_${roundId}`, JSON.stringify(newScores));
         localStorage.setItem(`liveScores_backup_${roundId}`, JSON.stringify(newScores));

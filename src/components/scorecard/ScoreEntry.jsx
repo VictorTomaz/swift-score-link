@@ -30,8 +30,7 @@ export default function ScoreEntry({ round, onUpdate, onScoresChange, switchMode
   selectedForGroup, onSelectedForGroupChange, groupLockedPlayerIds, onGroupLocked, completedPlayerIds, onCompletedChange, showVerify, onShowVerifyChange, onPlayerScoreSave }) {
   const scoreMode = dictateOnly ? 'dictate' : 'type';
 
-  const urlParams = new URLSearchParams(window.location.search);
-   const roundId = urlParams.get("id");
+   const roundId = round?.id;
    const [currentHole, setCurrentHole] = useState(0);
 
    // Safeguard: if round players empty, try to restore from sessionStorage
@@ -218,12 +217,10 @@ export default function ScoreEntry({ round, onUpdate, onScoresChange, switchMode
         if (updatedScores) {
           const normalized = updatedScores.map(s => (s === 0 ? '' : String(s)));
           import("@/lib/roundScores").then(({ savePlayerScore }) => {
-            const urlP = new URLSearchParams(window.location.search);
-            const rId = urlP.get("id");
-            if (rId) {
+            if (roundId) {
               const team = isTeamScore ? getTeamOfPlayer(round, pid) : null;
               const ids = team ? team.memberIds : [pid];
-              ids.forEach(tid => savePlayerScore(rId, tid, normalized, {}));
+              ids.forEach(tid => savePlayerScore(roundId, tid, normalized, {}));
             }
           });
         }

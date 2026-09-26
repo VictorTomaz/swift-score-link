@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
 import { X, ChevronLeft } from 'lucide-react';
@@ -82,10 +82,10 @@ const defaultForm = {
 
 export default function SetupWizard() {
   const navigate = useNavigate();
-  const urlParams = new URLSearchParams(window.location.search);
-  const existingRoundId = urlParams.get('id');
-  const addFlightParentId = urlParams.get('addFlight');
-  const addDayRoundId = urlParams.get('addDay');
+  const [searchParams] = useSearchParams();
+  const existingRoundId = searchParams.get('id');
+  const addFlightParentId = searchParams.get('addFlight');
+  const addDayRoundId = searchParams.get('addDay');
   const [loading, setLoading] = useState(false);
   const [formReady, setFormReady] = useState(!existingRoundId && !addFlightParentId && !addDayRoundId);
 
