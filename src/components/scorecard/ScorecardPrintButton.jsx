@@ -8,12 +8,14 @@ import { shareOrDownloadPdf } from "@/lib/fileShare";
 import { toast } from "sonner";
 import ScorecardHtmlPreview from "@/components/scorecard/ScorecardHtmlPreview";
 import { getScorecardGroups, getPrintPages } from "@/lib/scorecardGroups";
+import { Capacitor } from "@capacitor/core";
+import { generateNativeScorecardPdf } from "@/lib/nativeScorecardPdf.jsx";
 
 /**
  * Print the round's scorecards.
  *  - Browser: window.print() renders the #print-scorecards portal (live HTML).
- *  - Native app WebView: window.print() is a no-op, so generate a scorecard
- *    PDF server-side and download it so the OS share/print sheet can handle it.
+ *  - Native iOS app: window.print() is a no-op, so render the same scorecards
+ *    to a local PDF and hand it to the OS share/print sheet.
  */
 export default function ScorecardPrintButton({ round, variant = "outline", size = "sm", className = "" }) {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -29,10 +31,21 @@ export default function ScorecardPrintButton({ round, variant = "outline", size 
     }
     setIsGenerating(true);
     try {
-      const res = await base44.functions.invoke("generateScorecardPdf", { roundId: round.id, _cb: Date.now() });
-      const { url, filename } = res?.data || {};
-      if (!url) throw new Error("No URL returned from server");
-      await shareOrDownloadPdf(url, filename || `scorecards-${round.event_name || "golf"}.pdf`);
+      const filename = `scorecards-${round.event_name || "golf"}.pdf`;
+      if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios") {
+        const blob = await generateNativeScorecardPdf(round);
+        const url = URL.createObjectURL(blob);
+        try {
+          await shareOrDownloadPdf(url, filename);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      } else {
+        const res = await base44.functions.invoke("generateScorecardPdf", { roundId: round.id, _cb: Date.now() });
+        const { url, filename: serverFilename } = res?.data || {};
+        if (!url) throw new Error("No URL returned from server");
+        await shareOrDownloadPdf(url, serverFilename || filename);
+      }
       toast.success("Scorecards ready — use the share sheet to print or save.");
     } catch (error) {
       toast.error("Failed to generate scorecard PDF: " + (error.message || "unknown error"));

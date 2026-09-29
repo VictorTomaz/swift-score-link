@@ -27,6 +27,8 @@ import VegasAllowanceInput from "@/components/setup-wizard/VegasAllowanceInput";
 import CombinedTeeSheet from "@/components/logistics/CombinedTeeSheet";
 import LogisticsRoundSelector from "@/components/logistics/LogisticsRoundSelector";
 import ChampionLogisticsCard from "@/components/logistics/ChampionLogisticsCard";
+import { Capacitor } from "@capacitor/core";
+import { generateNativeScorecardPdf } from "@/lib/nativeScorecardPdf.jsx";
 
 const DEFAULT_CONFIG = { start_time: "08:00", interval_minutes: 8, group_size: 4, extra_slots: 0 };
 
@@ -52,7 +54,7 @@ export default function TournamentLogistics() {
   const [showEmailSelector, setShowEmailSelector] = useState(false);
   const [showTeeTimes, setShowTeeTimes] = useState(false);
   const [showScorecards, setShowScorecards] = useState(false);
-  const [showCombined, setShowCombined] = useState(false);
+  const [teeSheetView, setTeeSheetView] = useState("per-flight");
 
   // Local config + assignments (mirrors round data)
   const [config, setConfig] = useState(DEFAULT_CONFIG);
@@ -199,7 +201,7 @@ export default function TournamentLogistics() {
   }, [scorecardGroups, selectedRound?.team_mode]);
 
   const handleSelectRound = async (round) => {
-    setShowCombined(false);
+    setTeeSheetView("per-flight");
     setSelectedRound(round);
     setGeneratedTeeSheetPdfUrl(null);
     setScorecardPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
@@ -844,22 +846,33 @@ export default function TournamentLogistics() {
         tee_time: assignments[p.player_id] || null,
         tee_group: groupTags[p.player_id] || null,
       }));
-      const res = await base44.functions.invoke("generateScorecardPdf", { roundId: selectedRound.id, players: screenPlayers, _cb: Date.now() });
-      const { url, filename } = res.data || {};
-      if (!url) throw new Error('No URL returned from server');
-      // Download the fresh PDF via blob + download attribute so iOS Safari's
-      // PDF viewer never opens — no viewer tab means no stale-render cache.
-      const blobRes = await fetch(url);
-      const blob = await blobRes.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = filename || `scorecards-${selectedRound.event_name || 'golf'}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-      toast.success('Scorecard PDF downloaded!');
+      const filename = `scorecards-${selectedRound.event_name || 'golf'}.pdf`;
+      if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === "ios") {
+        const blob = await generateNativeScorecardPdf(selectedRound, screenPlayers);
+        const url = URL.createObjectURL(blob);
+        try {
+          await shareOrDownloadPdf(url, filename);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        toast.success('Scorecards ready — use the share sheet to print or save.');
+      } else {
+        const res = await base44.functions.invoke("generateScorecardPdf", { roundId: selectedRound.id, players: screenPlayers, _cb: Date.now() });
+        const { url, filename: serverFilename } = res.data || {};
+        if (!url) throw new Error('No URL returned from server');
+        // Browser downloads continue to use the existing server-generated PDF.
+        const blobRes = await fetch(url);
+        const blob = await blobRes.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = serverFilename || filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+        toast.success('Scorecard PDF downloaded!');
+      }
     } catch (error) {
       toast.error('Failed to download scorecard PDF: ' + (error.message || 'unknown error'));
     } finally {
@@ -1367,14 +1380,14 @@ export default function TournamentLogistics() {
 
           {selectedRound.is_multi_flight && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 p-2" aria-label="Tee sheet view">
-              <Button size="sm" variant={!showCombined ? 'default' : 'ghost'} aria-pressed={!showCombined} onClick={() => setShowCombined(false)}>Per-flight</Button>
-              <Button size="sm" variant={showCombined ? 'default' : 'ghost'} aria-pressed={showCombined} onClick={() => { setShowCombined(true); setShowTeeTimes(true); }} className="gap-1.5"><Layers className="h-4 w-4" />Combined</Button>
+              <Button size="sm" variant={teeSheetView === 'per-flight' ? 'default' : 'ghost'} aria-pressed={teeSheetView === 'per-flight'} onClick={() => setTeeSheetView('per-flight')}>Per-flight</Button>
+              <Button size="sm" variant={teeSheetView === 'combined' ? 'default' : 'ghost'} aria-pressed={teeSheetView === 'combined'} onClick={() => { setTeeSheetView('combined'); setShowTeeTimes(true); }} className="gap-1.5"><Layers className="h-4 w-4" />Combined</Button>
             </div>
           )}
 
-          {showTeeTimes && showCombined && selectedRound.is_multi_flight && (
+          {showTeeTimes && teeSheetView === 'combined' && selectedRound.is_multi_flight && (
             <CombinedTeeSheet
-              key={selectedRound.id}
+              key={`${selectedRound.id}:combined`}
               round={selectedRound}
               players={players.map(p => ({ ...p, tee_time: assignments[p.player_id] || null, tee_group: groupTags[p.player_id] || null }))}
               email={user?.email}
@@ -1639,14 +1652,14 @@ export default function TournamentLogistics() {
                   </Button>
                 </div>
               ) : showTeeTimes ? (
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-background">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <div className="w-full min-w-0 sm:flex-1 flex items-center gap-2 px-3 h-9 rounded-md border border-input bg-background">
                     <Shuffle className="w-4 h-4 text-muted-foreground shrink-0" />
                     <select
                       value={algorithm}
                       onChange={(e) => setAlgorithm(e.target.value)}
                       disabled={!players.length}
-                      className="flex-1 bg-transparent text-sm font-medium text-foreground focus:outline-none cursor-pointer min-h-[36px]"
+                      className="min-w-0 flex-1 bg-transparent text-sm font-medium text-foreground focus:outline-none cursor-pointer min-h-[36px]"
                     >
                       {ALGORITHMS.map((a) => (
                         <option key={a.value} value={a.value}>{a.label}</option>
@@ -1654,7 +1667,7 @@ export default function TournamentLogistics() {
                       <option value="seed_by_score">Seed by Score (Leaders Last)</option>
                     </select>
                   </div>
-                  <Button onClick={handleGenerate} className="gap-2 bg-logistics text-logistics-foreground hover:bg-logistics/90" disabled={!players.length}>
+                  <Button onClick={handleGenerate} className="w-full sm:w-auto gap-2 bg-logistics text-logistics-foreground hover:bg-logistics/90" disabled={!players.length}>
                     <Shuffle className="w-4 h-4" />
                     Generate
                   </Button>
@@ -1703,7 +1716,7 @@ export default function TournamentLogistics() {
           </Card>
 
           <DragDropContext onDragEnd={handleDragEnd}>
-          {showTeeTimes && !showCombined && (
+          {showTeeTimes && teeSheetView === 'per-flight' && (
           <>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">

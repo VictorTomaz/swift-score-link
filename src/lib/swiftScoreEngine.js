@@ -1374,6 +1374,15 @@ export function computeResults(round) {
       console.log(`Player ${p.name}: hasScores=${hasScores}, validCount=${validCount}/18, scores=${p.scores?.join(',')}`);
       return hasScores;
     });
+
+  // A round can have a roster while no player has enough scores yet. The
+  // filtered packet is intentionally empty in that case, but validating it
+  // would misreport the problem as an empty roster. Validate the actual
+  // roster instead so each incomplete scorecard gets an actionable issue.
+  if ((round.players || []).length > 0 && playersWithScores.length === 0) {
+    return { success: false, issues: validateScorePacket(round) };
+  }
+
   const roundForCompute = { ...round, players: playersWithScores, all_players: round.players };
   console.log(`Players with scores: ${playersWithScores.length}/${round.players?.length}`);
 

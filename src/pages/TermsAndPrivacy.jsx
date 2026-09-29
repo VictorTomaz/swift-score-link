@@ -1,9 +1,32 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function TermsAndPrivacy() {
+  const navigate = useNavigate();
+
+  const handleBack = () => {
+    // HashRouter stores its navigation index in history state. Returning via
+    // the router preserves the page the user came from; a direct deep link
+    // falls back to the app dashboard.
+    if (typeof window !== 'undefined' && Number.isInteger(window.history.state?.idx) && window.history.state.idx > 0) {
+      navigate(-1);
+      return;
+    }
+    navigate('/Dashboard', { replace: true });
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6 pb-20">
+      <button
+        type="button"
+        onClick={handleBack}
+        className="relative z-10 inline-flex min-h-11 items-center gap-2 rounded-md border border-white/30 px-3 text-sm font-medium text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to app
+      </button>
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">End User License Agreement (EULA)</CardTitle>
