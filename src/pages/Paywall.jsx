@@ -127,15 +127,14 @@ export default function Paywall() {
   const [copyFeedback, setCopyFeedback] = useState(null);
   const syncDebugLog = () => {
     setDebugLog(debugBuffer.slice(-80));
-    setShowDebugLog(true); // auto-expand once there's something to see
   };
   const copyDebugLog = async () => {
     const text = debugLog.join('\n');
     try {
       await navigator.clipboard.writeText(text);
-      setCopyFeedback('Log copiado!');
+      setCopyFeedback('Log copied!');
     } catch (_e) {
-      setCopyFeedback('Não foi possível copiar automaticamente — selecione o texto manualmente.');
+      setCopyFeedback('Could not copy automatically — please select the text manually.');
     }
     setTimeout(() => setCopyFeedback(null), 2500);
   };
@@ -689,38 +688,6 @@ export default function Paywall() {
           </div>
         )}
 
-        {/* TEMPORARY on-screen debug trail — lets a tester copy/paste the full
-            trace without a USB connection. Remove before public release. */}
-        {debugLog.length > 0 && (
-          <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowDebugLog((v) => !v)}
-              className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground"
-            >
-              <span>Log técnico ({debugLog.length} linhas)</span>
-              <span>{showDebugLog ? "Ocultar ▲" : "Mostrar ▼"}</span>
-            </button>
-            {showDebugLog && (
-              <div className="px-3 pb-3 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={copyDebugLog}>
-                    Copiar log
-                  </Button>
-                  {copyFeedback && (
-                    <span className="text-xs text-muted-foreground">{copyFeedback}</span>
-                  )}
-                </div>
-                <pre
-                  className="text-[10px] leading-snug font-mono whitespace-pre-wrap break-all max-h-64 overflow-y-auto select-text bg-background/60 rounded p-2 border border-border"
-                >
-                  {debugLog.join("\n")}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Plans */}
         <div className="grid grid-cols-1 gap-4">
           {/* Monthly Plan */}
@@ -836,6 +803,38 @@ export default function Paywall() {
             Sign Out
           </button>
         </div>
+
+        {/* TEMPORARY on-screen debug trail — lets a tester copy/paste the full
+            trace without a USB connection. Kept discreet, below Sign Out.
+            Remove before public release. */}
+        {debugLog.length > 0 && (
+          <div className="-mt-4 text-center">
+            <button
+              type="button"
+              onClick={() => setShowDebugLog((v) => !v)}
+              className="text-[10px] text-muted-foreground/60 hover:text-muted-foreground"
+            >
+              Technical log ({debugLog.length}) {showDebugLog ? "▲" : "▼"}
+            </button>
+            {showDebugLog && (
+              <div className="mt-2 rounded-lg border border-border bg-muted/30 p-3 space-y-2 text-left">
+                <div className="flex items-center justify-between gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={copyDebugLog}>
+                    Copy log
+                  </Button>
+                  {copyFeedback && (
+                    <span className="text-xs text-muted-foreground">{copyFeedback}</span>
+                  )}
+                </div>
+                <pre
+                  className="text-[10px] leading-snug font-mono whitespace-pre-wrap break-all max-h-64 overflow-y-auto select-text bg-background/60 rounded p-2 border border-border"
+                >
+                  {debugLog.join("\n")}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Back Button */}
         <Button 
