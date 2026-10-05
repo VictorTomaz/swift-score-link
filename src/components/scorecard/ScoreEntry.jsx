@@ -138,6 +138,12 @@ export default function ScoreEntry({ round, onUpdate, onScoresChange, switchMode
       } else if (e.error === 'not-allowed') {
         toast.error("Microphone permission denied. Enable in settings.");
         shouldRestartRef.current = false; isListeningRef.current = false; setIsListening(false);
+      } else if (e.error === 'service-not-allowed') {
+        toast.error("Speech recognition is not allowed. Enable Speech Recognition for this app in Settings.");
+        shouldRestartRef.current = false; isListeningRef.current = false; setIsListening(false);
+      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        toast.error(`Voice input error: ${e.error}`);
+        shouldRestartRef.current = false; isListeningRef.current = false; setIsListening(false);
       }
     };
 

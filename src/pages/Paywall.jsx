@@ -747,10 +747,10 @@ export default function Paywall() {
             <CardContent className="p-5 flex flex-col justify-between h-full">
               <div className="space-y-2">
                 <h3 className="text-lg font-bold text-foreground">Yearly Plan</h3>
-                <p className="text-xs text-muted-foreground">Save over 50% compared to the monthly plan!</p>
+                <p className="text-xs text-muted-foreground">Save about 50% compared to the monthly plan!</p>
                 <div className="flex items-baseline gap-1 pt-2">
                   <span className="text-3xl font-extrabold text-foreground">
-                    {storeKitProducts.find(p => p.id === 'com.swiftscoregolf.yearly')?.price || "$29.95"}
+                    {storeKitProducts.find(p => p.id === 'com.swiftscoregolf.yearly')?.price || "$29.99"}
                   </span>
                   <span className="text-sm text-muted-foreground">/year</span>
                 </div>

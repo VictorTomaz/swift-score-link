@@ -117,7 +117,7 @@ export default function TermsAndPrivacy() {
             <p className="text-muted-foreground">Swift Score Golf Premium is available as an auto-renewing subscription with the following plans:</p>
             <ul className="text-muted-foreground mt-2 space-y-1 list-disc list-inside">
               <li><strong>Monthly Plan:</strong> $4.99 USD per month</li>
-              <li><strong>Yearly Plan:</strong> $29.95 USD per year</li>
+              <li><strong>Yearly Plan:</strong> $29.99 USD per year</li>
             </ul>
           </div>
           <div>
