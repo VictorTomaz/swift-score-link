@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
 import { Star, Trophy, Shield, Mail, TrendingUp, Zap, DollarSign, Target } from "lucide-react";
@@ -120,6 +120,7 @@ export default function Paywall() {
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState(null);
   const [storeKitProducts, setStoreKitProducts] = useState([]);
+  const [productsUnavailable, setProductsUnavailable] = useState(false);
   // On-screen copy of debugBuffer (see comment above deviceLog) — TEMPORARY,
   // remove before public release.
   const [debugLog, setDebugLog] = useState([]);
@@ -220,9 +221,11 @@ export default function Paywall() {
   // jwsTransaction}, é exatamente esse caso: uma tentativa que falhou na
   // validação antes ganha uma nova chance aqui, em vez de ficar perdida.
   useEffect(() => {
-    let listener = null;
+    // addListener returns a Promise<PluginListenerHandle> — keep the promise and
+    // await it on cleanup, otherwise `.remove()` is called on a Promise and throws.
+    let listenerPromise = null;
     if (isIOSNative) {
-      listener = StoreKitPlugin.addListener("subscriptionUpdate", async (event) => {
+      listenerPromise = StoreKitPlugin.addListener("subscriptionUpdate", async (event) => {
         console.log("Subscription updated event received from iOS StoreKit 2", event);
         const { transactionId, productId, jwsTransaction } = event || {};
         if (transactionId && productId && jwsTransaction) {
@@ -251,8 +254,10 @@ export default function Paywall() {
       });
     }
     return () => {
-      if (listener) {
-        listener.remove();
+      if (listenerPromise) {
+        Promise.resolve(listenerPromise)
+          .then((handle) => handle?.remove?.())
+          .catch((err) => console.warn("Failed to remove StoreKit listener:", err));
       }
     };
   }, [isIOSNative]);
@@ -260,11 +265,15 @@ export default function Paywall() {
   const loadStoreKitProducts = async () => {
     try {
       const result = await StoreKitPlugin.getProducts();
-      if (result && result.products) {
+      if (result && Array.isArray(result.products) && result.products.length > 0) {
         setStoreKitProducts(result.products);
+        setProductsUnavailable(false);
+      } else {
+        setProductsUnavailable(true);
       }
     } catch (err) {
       console.error("Failed to load StoreKit products:", err);
+      setProductsUnavailable(true);
     }
   };
 
@@ -630,7 +639,7 @@ export default function Paywall() {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="min-h-screen px-4 py-8 pb-12"
+      className="min-h-screen bg-background px-4 py-8 pb-12"
     >
       <div className="max-w-lg mx-auto space-y-8">
         {/* Header */}
@@ -689,6 +698,18 @@ export default function Paywall() {
         )}
 
         {/* Plans */}
+        {isIOSNative && productsUnavailable && (
+          <div className="rounded-lg border border-border bg-muted/30 p-3 text-center text-xs text-muted-foreground">
+            <p>We couldn't load live prices from the App Store. The prices shown below are estimates and the final price is confirmed at checkout.</p>
+            <button
+              type="button"
+              onClick={loadStoreKitProducts}
+              className="mt-2 underline hover:text-foreground"
+            >
+              Try again
+            </button>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-4">
           {/* Monthly Plan */}
           <Card className="border border-primary/20 relative overflow-hidden bg-card shadow-sm">
@@ -777,13 +798,13 @@ export default function Paywall() {
 
         {/* Links */}
         <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
-          <a href="/TermsAndPrivacy" className="hover:text-foreground underline">
+          <Link to="/TermsAndPrivacy" className="hover:text-foreground underline">
             Terms of Service
-          </a>
+          </Link>
           <span>·</span>
-          <a href="/TermsAndPrivacy" className="hover:text-foreground underline">
+          <Link to="/TermsAndPrivacy" className="hover:text-foreground underline">
             Privacy Policy
-          </a>
+          </Link>
         </div>
 
         {/* Sign Out — the only entry point a free/non-subscribed user has to

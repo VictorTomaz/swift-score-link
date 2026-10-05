@@ -37,6 +37,12 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Swift Score Golf uses the camera to scan printed scorecards and enter scores.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Swift Score Golf uses the microphone when you dictate scores or player names.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Swift Score Golf transcribes your spoken scores and player names so you can enter them without typing.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

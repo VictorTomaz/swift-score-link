@@ -21,6 +21,8 @@ import { lazyWithReload } from '@/lib/lazyWithReload';
 import AppLayout from '@/components/layout/AppLayout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import ScrollToTop from '@/components/ScrollToTop';
+import LoadingScreen from '@/components/LoadingScreen';
+import ChunkErrorBoundary from '@/components/ChunkErrorBoundary';
 
 // Deep link handler for the native Google/Apple login bridge (see
 // AuthCallback.jsx / skill base44-capacitor-social-auth-ios). Lives outside
@@ -66,21 +68,14 @@ const AuthenticatedApp = () => {
   const { isLoadingAuth } = useAuth();
 
   if (isLoadingAuth) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center bg-background">
-        <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
     <>
       <ScrollToTop />
-      <Suspense fallback={
-        <div className="fixed inset-0 flex items-center justify-center bg-background">
-          <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
-        </div>
-      }>
+      <ChunkErrorBoundary>
+      <Suspense fallback={<LoadingScreen />}>
       <Routes>
         {/* Public routes — no auth required */}
         <Route path="/public-results/:roundId" element={<PublicResults />} />
@@ -121,6 +116,7 @@ const AuthenticatedApp = () => {
         <Route path="*" element={<PageNotFound />} />
       </Routes>
       </Suspense>
+      </ChunkErrorBoundary>
     </>
   );
 };
