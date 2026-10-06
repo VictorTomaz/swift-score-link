@@ -136,7 +136,10 @@ Deno.serve(async (req) => {
     const now = new Date();
     
     const isActive = expiresDate ? expiresDate > now : false;
-    const isTrial = transaction.offerType === 1 || transaction.offerType === 2;
+    // offerType 1 = introductory, 2 = promotional, 3 = offer code (free trial only
+    // when Apple marks it FREE_TRIAL).
+    const isTrial = transaction.offerType === 1 || transaction.offerType === 2 ||
+      (transaction.offerType === 3 && transaction.offerDiscountType === 'FREE_TRIAL');
     
     let status = 'active';
     if (!isActive) {

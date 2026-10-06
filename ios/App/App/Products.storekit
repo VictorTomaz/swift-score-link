@@ -56,7 +56,7 @@
           },
           "localizations" : [
             {
-              "description" : "Save over 50% compared to the monthly plan!",
+              "description" : "Save about 50% compared to the monthly plan!",
               "displayName" : "Yearly Plan",
               "locale" : "en_US"
             }

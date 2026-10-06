@@ -175,7 +175,10 @@ Deno.serve(async (req) => {
         const now = new Date();
         
         const isActive = expiresDate ? expiresDate > now : false;
-        const isTrial = decoded.offerType === 1 || decoded.offerType === 2;
+        // offerType 1 = introductory, 2 = promotional, 3 = offer code. A redeemed
+        // offer code is a free trial only when Apple marks it FREE_TRIAL.
+        const isTrial = decoded.offerType === 1 || decoded.offerType === 2 ||
+          (decoded.offerType === 3 && decoded.offerDiscountType === 'FREE_TRIAL');
         const isSandbox = decoded.environment === 'Sandbox';
 
         // decoded.appAccountToken is the UUID the native app attached to this

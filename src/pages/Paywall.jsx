@@ -612,7 +612,7 @@ export default function Paywall() {
             {isTrial ? "Trial Active" : "Premium Active"}
           </h2>
           <p className="text-muted-foreground">
-            {isTrial ? "Enjoy your 30-day free trial!" : "Thank you for subscribing!"}
+            {isTrial ? "Enjoy your free trial!" : "Thank you for subscribing!"}
           </p>
           {statusMessage && (
             <p className="text-sm text-muted-foreground animate-pulse">
