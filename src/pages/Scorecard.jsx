@@ -151,8 +151,15 @@ export default function Scorecard() {
   // Mount-only ([]) — depending on [round] tears down the interval on every
   // refetch (initial load, invalidate, realtime) before any tick can execute.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    // HashRouter: read the query from the router location (window.location.search is empty).
+    const params = new URLSearchParams(location.search);
     if (params.get("scrollTo") !== "lockRoster") return;
+    const clearScrollToParam = () => {
+      const next = new URLSearchParams(location.search);
+      next.delete("scrollTo");
+      const search = next.toString();
+      navigate({ pathname: location.pathname, search: search ? `?${search}` : "" }, { replace: true });
+    };
 
     let done = false;
     const deadline = Date.now() + 10000;
@@ -169,14 +176,10 @@ export default function Scorecard() {
           const targetY = window.scrollY + rect.top + rect.height / 2 - window.innerHeight / 2;
           window.scrollTo(0, Math.max(0, targetY));
         }, 50);
-        const url = new URL(window.location.href);
-        url.searchParams.delete("scrollTo");
-        window.history.replaceState(null, "", url.toString());
+        clearScrollToParam();
       } else if (Date.now() >= deadline) {
         clearInterval(interval);
-        const url = new URL(window.location.href);
-        url.searchParams.delete("scrollTo");
-        window.history.replaceState(null, "", url.toString());
+        clearScrollToParam();
       }
     }, 150);
     return () => clearInterval(interval);

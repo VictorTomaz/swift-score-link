@@ -32,8 +32,11 @@ export default function FlightSwitcher({ round, onBeforeSwitch }) {
   const go = async (target) => {
     if (target.id === round.id) return;
     if (onBeforeSwitch) await onBeforeSwitch();
-    // Full navigation so all per-round scoring state re-initializes cleanly
-    window.location.href = `/Scorecard?id=${target.id}`;
+    // Full reload so all per-round scoring state re-initializes cleanly. The app
+    // uses HashRouter: the route and its query live in the hash, so a plain
+    // `/Scorecard?id=` path would not match any route (blank screen on native).
+    window.location.hash = `#/Scorecard?id=${target.id}`;
+    window.location.reload();
   };
 
   return (

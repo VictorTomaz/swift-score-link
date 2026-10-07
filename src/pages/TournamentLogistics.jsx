@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/AuthContext";
@@ -34,6 +34,7 @@ const DEFAULT_CONFIG = { start_time: "08:00", interval_minutes: 8, group_size: 4
 
 export default function TournamentLogistics() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const queryClient = useQueryClient();
@@ -235,15 +236,16 @@ export default function TournamentLogistics() {
   const deepLinkHandledRef = useRef(false);
   useEffect(() => {
     if (deepLinkHandledRef.current || !rounds.length) return;
-    const id = new URLSearchParams(window.location.search).get("id");
+    // HashRouter: the query lives in the hash, so read it from the router location.
+    const id = new URLSearchParams(location.search).get("id");
     if (!id) return;
     const match = rounds.find((r) => r.id === id);
     deepLinkHandledRef.current = true;
     if (match) {
       handleSelectRound(match);
-      window.history.replaceState({}, "", window.location.pathname);
+      navigate({ pathname: location.pathname }, { replace: true });
     }
-  }, [rounds]);
+  }, [rounds, location.search]);
 
   const timeSlots = useMemo(() => {
     if (!players.length) return [];

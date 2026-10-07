@@ -4,6 +4,7 @@ import { Pencil, ChevronDown, ChevronRight, Users } from "lucide-react";
 import ScoreEditModal from "@/components/results/ScoreEditModal";
 import { computeTeamHandicap } from "@/lib/teamHandicap";
 import { isVegasFormat, vegasHoleScore, netHandicapScale, scaleHandicap } from "@/lib/vegasFormat";
+import { getRouteParam } from "@/lib/routeParams";
 
 const countValid = arr => arr ? arr.filter(s => s !== '' && s !== null && s !== undefined && s !== 0).length : 0;
 
@@ -135,7 +136,7 @@ export default function TeamScoreSummary({ round, liveScores, onScoresChange, on
   const isAggregate = round.game_type === "team_aggregate" || (round.team_mode === true && round.team_format === "aggregate");
   const isTeamRowFormat = isScramble || isChapman || is666;
   const isVegas = isVegasFormat(round);
-  const roundId = roundIdProp || round?.id || new URLSearchParams(window.location.search).get("id");
+  const roundId = roundIdProp || round?.id || getRouteParam("id");
 
   const [committedScores, setCommittedScores] = useState({});
   const [editMode, setEditMode] = useState(false);

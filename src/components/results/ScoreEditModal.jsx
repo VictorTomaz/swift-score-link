@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { getRouteParam } from '@/lib/routeParams';
 
 export default function ScoreEditModal({ isOpen, onClose, player, round, roundPlayers, onSave, isSaving, initialScores }) {
   const [scores, setScores] = useState(null);
@@ -21,7 +22,7 @@ export default function ScoreEditModal({ isOpen, onClose, player, round, roundPl
       setScores(loaded);
     };
 
-    const roundId = round?.id || new URLSearchParams(window.location.search).get('id');
+    const roundId = round?.id || getRouteParam('id');
 
     // If no round ID yet, fall back to initialScores immediately
     if (!roundId) {

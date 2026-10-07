@@ -15,7 +15,7 @@ const publicNavItems = [
   { path: "/PlayersManagement", label: "Players", icon: Users },
   { path: "/History", label: "History", icon: History },
   { path: "/CoursesManagement", label: "Courses", icon: Settings },
-  { path: "/TeeSheet", label: "Tee Sheet", icon: CalendarClock },
+  { path: "/TournamentLogistics", label: "Logistics", icon: CalendarClock },
   { path: "/Help", label: "How It Works", icon: HelpCircle },
   { path: "/Settings", label: "Settings", icon: UserCog },
 ];

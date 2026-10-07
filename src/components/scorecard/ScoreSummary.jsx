@@ -2,11 +2,12 @@ import React, { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pencil, Check } from "lucide-react";
 import ScoreEditModal from "@/components/results/ScoreEditModal";
+import { getRouteParam } from "@/lib/routeParams";
 
 export default function ScoreSummary({ round, liveScores, onScoresChange, onEditModeChange, roundId: roundIdProp }) {
   const players = round.players || [];
   const par = round.par || new Array(18).fill(4);
-  const roundId = roundIdProp || round?.id || new URLSearchParams(window.location.search).get("id");
+  const roundId = roundIdProp || round?.id || getRouteParam("id");
 
   const countValid = arr => arr ? arr.filter(s => s !== '' && s !== null && s !== undefined && s !== 0).length : 0;
 
